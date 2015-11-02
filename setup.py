@@ -8,8 +8,16 @@ if platform.system() == 'Windows':
     # properly pass through the -IC parameter, just go
     # around it with environment variable
     os.environ['INCLUDE'] = 'C:\\OpenSSL-Win32\\include'
-    libraries=['libeay32', 'ssleay32']
-    os.environ['LIB'] = 'C:\\OpenSSL-Win32\\lib'
+    # MT -- we are going to use the static versions
+    libraries=['libeay32MT', 'ssleay32MT']
+    # add default libraries included by visual studios projects
+    # and other assorted missing dependencies
+    # ... someone could spend an excurciating few hours figuring
+    # out exactly which of these libraries are needed and which are
+    # not to minimize the list
+    libraries += ["advapi32", "shell32", "ole32", "oleaut32", "uuid", 
+        "odbc32", "odbccp32", "kernel32", "user32", "ws2_32" ]
+    os.environ['LIB'] = 'C:\\OpenSSL-Win32\\lib\\VC\\static'
 else:
     libraries = ['ssl', 'crypto']
     extra_compile_args = []

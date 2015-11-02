@@ -36,8 +36,7 @@ EVP_CTRL_GCM_SET_IVLEN = 0x9  # from openssl/crypto/evp/evp.h
 EVP_CTRL_GCM_GET_TAG = 0x10  # from openssl/crypto/evp/evp.h
 
 
-def aes_gcm_encrypt(bytes plaintext, bytes key, 
-                    bytes iv, bytes authdata=None):
+def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
     cdef:
         EVP_CIPHER_CTX *ctx = NULL
         unsigned char *outbuf = NULL
@@ -56,14 +55,31 @@ def aes_gcm_encrypt(bytes plaintext, bytes key,
             EVP_EncryptUpdate(ctx, None, &outlen, authdata, len(authdata))
         EVP_EncryptUpdate(ctx, outbuf, &outlen, plaintext, len(plaintext))
         EVP_EncryptFinal_ex(ctx, outbuf + outlen, &tmplen)
-        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tagbuf)
-        return bytes(outbuf), bytes(tagbuf)
+        EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, tagsize, tagbuf)
+        return bytes(outbuf[:outlen]), bytes(tagbuf[:tagsize])
     finally:
         if ctx:
             EVP_CIPHER_CTX_free(ctx)
         if outbuf:
             PyMem_Free(outbuf)
 
+'''
+def aes_gcm_decrypt(bytes ciphertext, bytes key,
+                    bytes iv, bytes tag, bytes authdata=None):
+    cdef:
+        EVP_CIPHER_CTX *ctx = NULL
+        unsigned char *outbuf = NULL
+
+    try:
+        ctx = EVP_CIPHER_CTX_new()
+        outbuf = <unsigned char*>PyMem_Malloc(len(ciphertext))
+
+    finally:
+        if ctx:
+            EVP_CIPHER_CTX_free(ctx)
+        if outbuf:
+            PyMem_Free(outbuf)
+'''
 
 cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen):
     if keylen == 128 / 8:
