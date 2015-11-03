@@ -16,7 +16,7 @@ if platform.system() == 'Windows':
     # out exactly which of these libraries are needed and which are
     # not to minimize the list
     libraries += ["advapi32", "shell32", "ole32", "oleaut32", "uuid", 
-        "odbc32", "odbccp32", "kernel32", "user32", "ws2_32" ]
+        "odbc32", "odbccp32", "kernel32", "user32", "ws2_32", "Gdi32" ]
     os.environ['LIB'] = 'C:\\OpenSSL-Win32\\lib\\VC\\static'
 else:
     libraries = ['ssl', 'crypto']
