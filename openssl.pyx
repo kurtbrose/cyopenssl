@@ -7,6 +7,9 @@ cdef extern from "openssl/evp.h":
     ctypedef struct EVP_CIPHER:
         pass
 
+    ctypedef struct EVP_PKEY:
+        pass
+
     ctypedef struct ENGINE:
         pass
 
@@ -39,6 +42,104 @@ cdef extern from "openssl/evp.h":
     int EVP_CTRL_GCM_SET_IVLEN
     int EVP_CTRL_GCM_GET_TAG
     int EVP_CTRL_GCM_SET_TAG
+
+    EVP_PKEY
+
+
+cdef extern from "openssl/bio.h":
+    ctypedef struct BIO:
+        pass
+
+
+cdef extern from "openssl/x509.h":
+    ctypedef struct X509:
+        pass
+
+    ctypedef struct X509_STORE:
+        pass
+
+    X509 *d2i_X509(X509 **px, const unsigned char **in, int len)
+    int i2d_X509(X509 *x, unsigned char **out)
+
+    X509_STORE *X509_STORE_new()
+    void X509_STORE_free(X509_STORE *x509_store)
+    int X509_STORE_add_cert(X509_STORE *x509_store, X509 *cert)
+
+
+cdef extern from "openssl/x509_vfy.h":
+    ctypedef struct X509_STORE_CTX:
+        pass
+
+
+cdef extern from "openssl/ssl.h":
+    int SSL_library_init()
+    void SSL_load_error_strings()
+
+    ctypedef struct SSL:
+        pass
+
+    ctypedef struct SSL_CTX:
+        pass
+
+    ctypedef struct SSL_SESSION:
+        pass
+
+    ctypedef struct SSL_CIPHER:
+        pass
+
+    ctypedef struct SSL_METHOD:
+        pass
+
+    # STACKs are used via STACK_OF() macro
+    ctypedef struct STACK:
+        pass
+
+    SSL *SSL_new(SSL_CTX *ctx)
+    void SSL_free(SSL *ssl)
+    int SSL_get_error(const SSL *ssl, int ret)
+    int SSL_write(SSL *ssl, const void *buf, int num)
+    int SSL_read(SSL *ssl, void *buf, int num)
+    int SSL_pending(const SSL *ssl)
+    int SSL_set_fd(SSL *ssl, int fd)
+    int SSL_set_session(SSL *ssl, SSL_SESSION *session)
+    BIO *SSL_get_rbio(SSL *ssl)
+    BIO *SSL_get_wbio(SSL *ssl)
+    long SSL_get_verify_result(const SSL *ssl)
+    X509 *SSL_get_peer_certificate(const SSL *ssl)
+    SSL_CIPHER *SSL_get_current_cipher(const SSL *ssl)
+    STACK *SSL_load_client_CA_file(char *file)
+    int SSL_set_cipher_list(SSL *ssl, char *str)
+    long SSL_ctrl(SSL *ssl, int cmd, long larg, char *parg)
+
+    SSL_CTX *SSL_CTX_new(const SSL_METHOD *method)
+    int SSL_CTX_set_session_id_context(SSL_CTX *ctx,
+        const unsigned char *sid_ctx, unsigned int sid_ctx_len)
+    int SSL_CTX_use_certificate(SSL_CTX *ctx, X509 *x)
+    int SSL_CTX_use_certificate_chain_file(SSL_CTX *ctx, const char *file)
+    void SSL_CTX_set_verify(SSL_CTX *ctx, int mode,
+        int (*verify_callback)(int, X509_STORE_CTX *))
+    void SSL_CTX_set_cert_store(SSL_CTX *ctx, X509_STORE *store)
+    X509_STORE *SSL_CTX_get_cert_store(const SSL_CTX *ctx)
+    int SSL_CTX_use_PrivateKey(SSL_CTX *ctx, EVP_PKEY *pkey)
+    int SSL_CTX_use_PrivateKey_file(SSL_CTX *ctx, char *file, int type)
+    ctypedef int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata)
+    void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_passwd_cb)
+    STACK *SSL_CTX_get_client_CA_list(const SSL_CTX *ctx)
+    void SSL_CTX_set_client_CA_list(SSL_CTX *ctx, STACK *list)
+    int SSL_CTX_add_client_CA(SSL_CTX *ctx, X509 *x)
+    int SSL_CTX_set_cipher_list(SSL_CTX *ctx, char *str)
+    int SSL_CTX_add_session(SSL_CTX *ctx, SSL_SESSION *c)
+    int SSL_CTX_load_verify_locations(SSL_CTX *ctx, char *CAfile, char *CApath)
+    long SSL_CTX_ctrl(SSL_CTX *ctx, int cmd, long larg, char *parg)
+
+    const char *SSL_CIPHER_get_name(SSL_CIPHER *cipher)
+    char *SSL_CIPHER_get_version(SSL_CIPHER *cipher)
+    char *SSL_CIPHER_description(SSL_CIPHER *cipher, char *buf, int len)
+    int SSL_CIPHER_get_bits(SSL_CIPHER *cipher, int *alg_bits)
+
+    const SSL_METHOD *TLSv1_method(void)
+
+    SSL_SESSION *d2i_SSL_SESSION(SSL_SESSION **a, const unsigned char **pp, long length)
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
@@ -110,6 +211,14 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen):
         return EVP_aes_192_gcm()
     elif keylen == 256 / 8:
         return EVP_aes_256_gcm()
+
+
+cdef _library_init():
+    SSL_load_error_strings()
+    SSL_library_init()
+
+
+_library_init()
 
 
 def test():
