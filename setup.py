@@ -8,25 +8,22 @@ extra_compile_args = []
 extra_objects = []
 libraries = []
 include_dirs = []
+library_dirs = []
 
 compiler = 'msvc'  # TODO: detect this properly
+STATIC = False
 
 if platform.system() == 'Windows':
     include_dirs = ['C:\\OpenSSL-Win32\\include']
-    if compiler == 'msvc':  # not working
-        # MT -- we are going to use the static versions
-        # libraries=['ssleay']
-        # add default libraries included by visual studios projects
-        # and other assorted missing dependencies
-        # ... someone could spend an excurciating few hours figuring
-        # out exactly which of these libraries are needed and which are
-        # not to minimize the list
-        # libraries += ["advapi32", "shell32", "ole32", "oleaut32", "uuid", 
-        #     "odbc32", "odbccp32", "kernel32", "user32", "ws2_32", "Gdi32" ]
-        # os.environ['LIB'] = 'C:\\OpenSSL-Win32\\lib'
-        extra_objects = [
-            'C:\\OpenSSL-Win32\\lib\\libeay32.lib', 
-            'C:\\OpenSSL-Win32\\lib\\ssleay32.lib']
+    if compiler == 'msvc':
+        if STATIC:
+            extra_objects = [
+                'C:\\OpenSSL-Win32\\lib\\libeay32.lib', 
+                'C:\\OpenSSL-Win32\\lib\\ssleay32.lib']
+        else:
+            library_dirs = ['C:\\OpenSSL-Win32\\lib']
+            libraries = ['libeay32', 'ssleay32', 'ws2_32', 'advapi32', 'crypt32',
+                         'gdi32', 'user32']
     elif compiler == 'mingw32':
         # let's try doing an end-run around all that complexity via MinGW
         SSLPATH = 'C:\\OpenSSL-Win32\\lib\\MinGW'
@@ -43,7 +40,8 @@ else:
 
 extension = Extension('openssl', sources=['openssl.pyx'],
     libraries=libraries, extra_compile_args=extra_compile_args,
-    extra_objects=extra_objects, include_dirs=include_dirs)
+    extra_objects=extra_objects, include_dirs=include_dirs,
+    library_dirs=library_dirs)
 
 
 setup(
