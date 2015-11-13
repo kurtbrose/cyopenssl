@@ -65,7 +65,7 @@ cdef extern from "openssl/x509.h":
     void X509_STORE_free(X509_STORE *x509_store)
     int X509_STORE_add_cert(X509_STORE *x509_store, X509 *cert)
 
-    ctypedef struct stack_st_X509_NAME:
+    struct stack_st_X509_NAME:
         pass
 
 
