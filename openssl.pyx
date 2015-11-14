@@ -1,3 +1,4 @@
+from libc cimport string
 
 
 cdef extern from "openssl/evp.h":
@@ -34,9 +35,13 @@ cdef extern from "openssl/evp.h":
 
     int EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX *ctx, int type, int arg, void *ptr)
 
+    void EVP_PKEY_free(EVP_PKEY *key)
+
     const EVP_CIPHER* EVP_aes_128_gcm()
     const EVP_CIPHER* EVP_aes_192_gcm()
     const EVP_CIPHER* EVP_aes_256_gcm()
+
+    EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **a, const unsigned char **pp, long length)
 
     # #define constants
     int EVP_CTRL_GCM_SET_IVLEN
@@ -74,6 +79,20 @@ cdef extern from "openssl/x509_vfy.h":
         pass
 
 
+cdef extern from "openssl/pem.h":
+    ctypedef int pem_password_cb(char *buf, int size, int rwflag, void *userdata)
+    EVP_PKEY *PEM_read_bio_PrivateKey(
+        BIO *bp, EVP_PKEY **x, pem_password_cb *cb, void *u)
+
+
+cdef extern from "openssl/bio.h":
+    ctypedef struct BIO:
+        pass
+
+    BIO *BIO_new_mem_buf(void *buf, int len)
+    int BIO_free(BIO *a)
+
+
 cdef extern from "openssl/ssl.h":
     int SSL_library_init()
     void SSL_load_error_strings()
@@ -98,9 +117,12 @@ cdef extern from "openssl/ssl.h":
     int SSL_get_error(const SSL *ssl, int ret)
     int SSL_write(SSL *ssl, const void *buf, int num)
     int SSL_read(SSL *ssl, void *buf, int num)
+    int SSL_do_handshake(SSL *ssl)
     int SSL_pending(const SSL *ssl)
     int SSL_set_fd(SSL *ssl, int fd)
     int SSL_set_session(SSL *ssl, SSL_SESSION *session)
+    void SSL_set_connect_state(SSL *ssl)
+    void SSL_set_accept_state(SSL *ssl)
     BIO *SSL_get_rbio(SSL *ssl)
     BIO *SSL_get_wbio(SSL *ssl)
     long SSL_get_verify_result(const SSL *ssl)
@@ -134,6 +156,11 @@ cdef extern from "openssl/ssl.h":
     long SSL_CTX_set_session_cache_mode(SSL_CTX *ctx, long mode)
     long SSL_CTX_get_session_cache_mode(SSL_CTX *ctx)
     long SSL_CTX_set_options(SSL_CTX *ctx, long options)
+    long SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509)
+    int SSL_CTX_check_private_key(const SSL_CTX *ctx)
+
+    void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb)
+    void SSL_CTX_set_default_passwd_cb_userdata(SSL_CTX *ctx, void *u)
 
     const char *SSL_CIPHER_get_name(SSL_CIPHER *cipher)
     char *SSL_CIPHER_get_version(SSL_CIPHER *cipher)
@@ -145,11 +172,21 @@ cdef extern from "openssl/ssl.h":
     SSL_SESSION *d2i_SSL_SESSION(SSL_SESSION **a, const unsigned char **pp, long length)
     void SSL_SESSION_free(SSL_SESSION* sess)
 
+    # set_verify parameters
     int SSL_VERIFY_NONE
     int SSL_VERIFY_PEER
     int SSL_VERIFY_FAIL_IF_NO_PEER_CERT
     int SSL_VERIFY_CLIENT_ONCE
 
+    # SSL error codes
+    int SSL_ERROR_NONE, SSL_ERROR_SSL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
+    int SSL_ERROR_ZERO_RETURN, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_CONNECT
+    int SSL_ERROR_WANT_X509_LOOKUP, SSL_ERROR_WANT_ACCEPT
+
+    int SSL_FILETYPE_PEM
+    int SSL_FILETYPE_ASN1
+
+    # session cache options
     long SSL_SESS_CACHE_OFF
     long SSL_SESS_CACHE_CLIENT
     long SSL_SESS_CACHE_SERVER
@@ -169,6 +206,7 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
+from cpython cimport bool
 
 
 cdef class Context:
@@ -240,18 +278,54 @@ cdef class Context:
                     raise ValueError("error loading certificate " +
                         repr(cert) + "\n" + _pop_and_format_error_list())
 
-    def use_certificate(self, Certificate certificate not None):
-        if not SSL_CTX_use_certificate(self.ctx, certificate.cert):
+    def use_certificate(self, Certificate cert not None):
+        if not SSL_CTX_use_certificate(self.ctx, cert.cert):
             raise _ssleay_err2value_err() or ValueError("SSL_CTX_use_certificate() error")
 
     def set_cert_store(self, CertStore cert_store not None):
         SSL_CTX_set_cert_store(self.ctx, cert_store.cert_store)
         cert_store.cert_store = NULL
 
+    def add_extra_chain_cert(self, Certificate cert not None):
+        if not SSL_CTX_add_extra_chain_cert(self.ctx, cert.cert):
+            raise _ssleay_err2value_err() or ValueError("SSL_CTX_add_extra_chain_cert() failed")
+
+    def use_privatekey(self, PrivateKey private_key not None):
+        if not SSL_CTX_use_PrivateKey(self.ctx, private_key.private_key):
+            raise _ssleay_err2value_err() or ValueError("SSL_CTX_use_PrivateKey() failed")
+
+    def use_privatekey_file(self, bytes keyfile not None, int filetype=SSL_FILETYPE_PEM):
+        if not SSL_CTX_use_PrivateKey_file(self.ctx, keyfile, filetype):
+            raise ValueError("error using private key from " + repr(keyfile) +
+                _pop_and_format_error_list())
+
+    def set_password(self, password):
+        self.password = password
+        SSL_CTX_set_default_passwd_cb_userdata(self.ctx, <void *>self.password)
+        SSL_CTX_set_default_passwd_cb(self.ctx, passwd_cb_passthru)
+
+    def check_privatekey(self):
+        if not SSL_CTX_check_private_key(self.ctx):
+            raise ValueError("private key and public cert do not match")
+
+    def load_verify_locations(self, bytes pemfile not None):
+        if SSL_CTX_load_verify_locations(self.ctx, pemfile, NULL):
+            raise ValueError("error using load_verify_locations(" + repr(pemfile) + ")"
+                + _pop_and_format_error_list)
+
+    def set_cipher_list(self, bytes cipher_list not None):
+        if not SSL_CTX_set_cipher_list(self.ctx, cipher_list):
+            raise ValueError("no usable ciphers in " + repr(cipher_list))
 
     def __dealloc__(self):
         if self.ctx:
             SSL_CTX_free(self.ctx)
+
+
+cdef int passwd_cb_passthru(char *buf, int size, int rwflag, void *userdata):
+    strdata = <bytes>userdata
+    string.strncpy(buf, <char *>strdata, len(strdata))
+    return len(strdata)
 
 
 cdef class Session:
@@ -269,6 +343,29 @@ cdef class Session:
     def __dealloc__(self):
         if self.sess:
             SSL_SESSION_free(self.sess)
+
+
+cdef class PrivateKey:
+    cdef:
+        EVP_PKEY *private_key
+
+    def __cinit__(self, data, passphrase=None):
+        self.private_key = NULL
+        cdef const unsigned char *data_ptr = data
+        cdef BIO *data_bio = NULL
+        if passphrase is None:
+            self.private_key = d2i_AutoPrivateKey(NULL, &data_ptr, len(data))
+        else:
+            data_bio = BIO_new_mem_buf(data_ptr, len(data))
+            self.private_key = PEM_read_bio_PrivateKey(
+                data_bio, NULL, NULL, <unsigned char*>passphrase)
+            BIO_free(data_bio)
+        if self.private_key == NULL:
+            raise _ssleay_err2value_err() or ValueError("PrivateKey init error")
+
+    def __dealloc__(self):
+        if self.private_key:
+            EVP_PKEY_free(self.private_key)
 
 
 cdef class Certificate:
@@ -320,6 +417,115 @@ cdef bytes _pop_and_format_error_list():
             <bytes>ERR_reason_error_string(err)))
         err = ERR_get_error()
     return b"-".join([b":".join(e) for e in err_list])
+
+
+import socket
+
+
+cdef enum SSL_OP:
+    DO_SSL_WRITE
+    DO_SSL_READ
+    DO_SSL_HANDSHAKE
+
+
+cdef class Socket:
+    cdef:
+        SSL *ssl
+        bint server_side
+        int fileno
+
+    def __cinit__(self, sock, Context context not None, bool server_side=False,
+            bool do_handshake_on_connect=True, bool suppress_ragged_eofs=True,
+            Session session=None, bytes cipherlist=b''):
+
+        self.ssl = SSL_new(context.ctx)
+        self.server_side = server_side
+        self.do_handshake_on_connect = do_handshake_on_connect
+        self.suppress_ragged_eofs = suppress_ragged_eofs
+        self.fileno = sock.fileno()
+        self.sock = sock
+        if cipherlist:
+            if not SSL_set_cipher_list(self.ssl, cipherlist):
+                raise ValueError("no ciphers matched " + repr(cipherlist))
+        if not SSL_set_fd(self.ssl, self.fileno):
+            import socket
+            raise socket.error("SSL_set_fd failed " + _pop_and_format_error_list())
+        if self.server_side:
+            SSL_set_accept_state(self.ssl)
+        else:
+            SSL_set_connect_state(self.ssl)
+            if session is not None:
+                SSL_set_session(self.ssl, session.sess)
+        if self.do_handshake_on_connect:
+            try:
+                self.sock.getpeername()
+            except:
+                pass
+            else:
+                self.do_handshake()
+
+    def send(self, bytes data not None, int flags=0, float timeout=-1):
+        if flags:
+            raise ValueError("flags not supported for SSL socket")
+        return self._do_ssl(DO_SSL_WRITE, data, len(data), timeout)
+
+    def recv(self, int size, int flags=0, float timeout=-1):
+        cdef char *buf
+        cdef int read
+        if flags:
+            raise ValueError("flags not supported for SSL socket")
+        buf = <char *>PyMem_Malloc(size)
+        read = self._do_ssl(DO_SSL_READ, buf, size, timeout)
+        response = <bytes>buf[:read]
+        PyMem_Free(buf)
+        return response
+
+    cdef int _do_ssl(self, SSL_OP op, char* data, int size, float timeout):
+        cdef:
+            int ret, err
+
+        if timeout < 0:
+            timeout = self.timeout
+        while 1:
+            if op == DO_SSL_WRITE:
+                ret = SSL_write(self.ssl, data, size)
+            elif op == DO_SSL_READ:
+                ret = SSL_read(self.ssl, data, size)
+            elif op == DO_SSL_HANDSHAKE:
+                ret = SSL_do_handshake(self.ssl)
+            err = SSL_get_error(self.ssl, ret)
+            if err == SSL_ERROR_NONE:
+                return ret
+            elif err == SSL_ERROR_SSL:
+                raise SSLError("SSL_ERROR_SSL")
+            elif err == SSL_ERROR_WANT_READ:
+                raise SSLWantRead()
+            elif err == SSL_ERROR_WANT_WRITE:
+                raise SSLWantWrite()
+            elif err == SSL_ERROR_WANT_X509_LOOKUP:
+                raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
+            elif err == SSL_ERROR_SYSCALL:
+                raise SSLError("SSL_ERROR_SYSCALL")
+            elif err == SSL_ERROR_ZERO_RETURN:
+                return 0
+            elif err == SSL_ERROR_WANT_CONNECT:
+                raise SSLError("SSL_ERROR_WANT_CONNECT")
+            elif err == SSL_ERROR_WANT_ACCEPT:
+                raise SSLError("SSL_ERROR_WANT_ACCEPT")
+            else:
+                raise SSLError("unknown")
+ 
+
+class SSLError(socket.error):
+    pass
+
+
+class SSLWantRead(SSLError):
+    pass
+
+
+class SSLWantWrite(SSLError):
+    pass
 
 
 def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
