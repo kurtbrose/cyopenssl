@@ -206,7 +206,7 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from cpython cimport bool
+from cpython cimport bool, PyErr_SetFromWindowsErr
 
 
 cdef class Context:
@@ -516,7 +516,10 @@ cdef class Socket:
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
             elif err == SSL_ERROR_SYSCALL:
-                raise SSLError("SSL_ERROR_SYSCALL")
+                # TODO: how to make this select the right option
+                # (e.g. ifdef WIN32)
+                PyErr_SetFromWindowsErr(0)
+                raise  # SSLError("SSL_ERROR_SYSCALL")
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0
             elif err == SSL_ERROR_WANT_CONNECT:
