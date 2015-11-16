@@ -145,7 +145,6 @@ cdef extern from "openssl/ssl.h":
     int SSL_CTX_use_PrivateKey(SSL_CTX *ctx, EVP_PKEY *pkey)
     int SSL_CTX_use_PrivateKey_file(SSL_CTX *ctx, char *file, int type)
     ctypedef int pem_passwd_cb(char *buf, int size, int rwflag, void *userdata)
-    void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_passwd_cb)
     stack_st_X509_NAME *SSL_CTX_get_client_CA_list(const SSL_CTX *ctx)
     void SSL_CTX_set_client_CA_list(SSL_CTX *ctx, stack_st_X509_NAME *list)
     int SSL_CTX_add_client_CA(SSL_CTX *ctx, X509 *x)
@@ -206,7 +205,7 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from cpython cimport bool, PyErr_SetExcFromWindowsErr
+from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno
 
 
 cdef class Context:
@@ -496,7 +495,7 @@ cdef class Socket:
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout):
         cdef:
-            int ret, err
+            int ret = 0, err = 0
 
         if timeout < 0:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
@@ -520,10 +519,10 @@ cdef class Socket:
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
             elif err == SSL_ERROR_SYSCALL:
-                # TODO: how to make this select the right option
-                # (e.g. ifdef WIN32)
-                PyErr_SetExcFromWindowsErr(SSLError, 0)
-                # raise  # SSLError("SSL_ERROR_SYSCALL")
+                IF UNAME_SYSNAME == "Windows":
+                    PyErr_SetExcFromWindowsErr(SSLError, 0)
+                ELSE:
+                    PyErr_SetFromErrno(SSLError)
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0
             elif err == SSL_ERROR_WANT_CONNECT:
