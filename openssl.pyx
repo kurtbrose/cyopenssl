@@ -95,7 +95,7 @@ cdef extern from "openssl/bio.h":
     int BIO_free(BIO *a)
 
 
-cdef extern from "openssl/ssl.h":
+cdef extern from "openssl/ssl.h" nogil:
     int SSL_library_init()
     void SSL_load_error_strings()
 
@@ -447,6 +447,7 @@ cdef class Socket:
         self.do_handshake_on_connect = do_handshake_on_connect
         self.suppress_ragged_eofs = suppress_ragged_eofs
         self.fileno = sock.fileno()
+        print "fileno", self.fileno
         self.sock = sock
         if cipherlist:
             if not SSL_set_cipher_list(self.ssl, cipherlist):
@@ -508,17 +509,19 @@ cdef class Socket:
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
             int ret = 0, err = 0
+            SSL *ssl
 
         if timeout < 0:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:
-            if op == DO_SSL_WRITE:
-                ret = SSL_write(self.ssl, data, size)
-            elif op == DO_SSL_READ:
-                ret = SSL_read(self.ssl, data, size)
-            elif op == DO_SSL_HANDSHAKE:
-                print "handshake"
-                ret = SSL_do_handshake(self.ssl)
+            ssl = self.ssl
+            with nogil:
+                if op == DO_SSL_WRITE:
+                    ret = SSL_write(ssl, data, size)
+                elif op == DO_SSL_READ:
+                    ret = SSL_read(ssl, data, size)
+                elif op == DO_SSL_HANDSHAKE:
+                    ret = SSL_do_handshake(ssl)
             err = SSL_get_error(self.ssl, ret)
             if err == SSL_ERROR_NONE:
                 return ret
