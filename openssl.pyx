@@ -503,8 +503,8 @@ cdef class Socket:
 
         self.timeout = timeout
         nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
-        BIO_set_nbio(SSL_get_rbio(self.ssl), nonblocking)
-        BIO_set_nbio(SSL_get_wbio(self.ssl), nonblocking)
+        BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
+        BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
@@ -528,6 +528,7 @@ cdef class Socket:
             elif err == SSL_ERROR_SSL:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
+                print "WANT READ" * 10
                 raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
                 raise SSLWantWrite()
