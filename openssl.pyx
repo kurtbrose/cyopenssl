@@ -37,9 +37,9 @@ cdef extern from "openssl/evp.h":
 
     void EVP_PKEY_free(EVP_PKEY *key)
 
-    const EVP_CIPHER* EVP_aes_128_gcm()
-    const EVP_CIPHER* EVP_aes_192_gcm()
-    const EVP_CIPHER* EVP_aes_256_gcm()
+    #const EVP_CIPHER* EVP_aes_128_gcm()
+    #const EVP_CIPHER* EVP_aes_192_gcm()
+    #const EVP_CIPHER* EVP_aes_256_gcm()
 
     EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **a, const unsigned char **pp, long length)
 
@@ -212,6 +212,7 @@ from cpython cimport bool
 cdef class Context:
     cdef:
         SSL_CTX *ctx
+        bytes password
 
     def __cinit__(self, method, verify=True, cerfile=None, keyfile=None,
                   ca_certs=None, passphrase=None):
@@ -299,7 +300,7 @@ cdef class Context:
             raise ValueError("error using private key from " + repr(keyfile) +
                 _pop_and_format_error_list())
 
-    def set_password(self, password):
+    def set_password(self, bytes password not None):
         self.password = password
         SSL_CTX_set_default_passwd_cb_userdata(self.ctx, <void *>self.password)
         SSL_CTX_set_default_passwd_cb(self.ctx, passwd_cb_passthru)
@@ -431,8 +432,10 @@ cdef enum SSL_OP:
 cdef class Socket:
     cdef:
         SSL *ssl
-        bint server_side
+        bint server_side, do_handshake_on_connect, suppress_ragged_eofs
+        object sock
         int fileno
+        double timeout
 
     def __cinit__(self, sock, Context context not None, bool server_side=False,
             bool do_handshake_on_connect=True, bool suppress_ragged_eofs=True,
@@ -444,6 +447,7 @@ cdef class Socket:
         self.suppress_ragged_eofs = suppress_ragged_eofs
         self.fileno = sock.fileno()
         self.sock = sock
+        self.timeout = 10  # TODO: timeout defaulting behavior
         if cipherlist:
             if not SSL_set_cipher_list(self.ssl, cipherlist):
                 raise ValueError("no ciphers matched " + repr(cipherlist))
@@ -464,12 +468,12 @@ cdef class Socket:
             else:
                 self.do_handshake()
 
-    def send(self, bytes data not None, int flags=0, float timeout=-1):
+    def send(self, bytes data not None, int flags=0, double timeout=-1):
         if flags:
             raise ValueError("flags not supported for SSL socket")
         return self._do_ssl(DO_SSL_WRITE, data, len(data), timeout)
 
-    def recv(self, int size, int flags=0, float timeout=-1):
+    def recv(self, int size, int flags=0, double timeout=-1):
         cdef char *buf
         cdef int read
         if flags:
@@ -480,18 +484,25 @@ cdef class Socket:
         PyMem_Free(buf)
         return response
 
-    cdef int _do_ssl(self, SSL_OP op, char* data, int size, float timeout):
+    def do_handshake(self, double timeout=-1):
+        return self._do_ssl(DO_SSL_HANDSHAKE, NULL, 0, timeout)
+
+    def set_timeout(self, double timeout):
+        self.timeout = timeout
+
+    cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout):
         cdef:
             int ret, err
 
         if timeout < 0:
-            timeout = self.timeout
+            timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:
             if op == DO_SSL_WRITE:
                 ret = SSL_write(self.ssl, data, size)
             elif op == DO_SSL_READ:
                 ret = SSL_read(self.ssl, data, size)
             elif op == DO_SSL_HANDSHAKE:
+                print "handshake"
                 ret = SSL_do_handshake(self.ssl)
             err = SSL_get_error(self.ssl, ret)
             if err == SSL_ERROR_NONE:
@@ -527,7 +538,7 @@ class SSLWantRead(SSLError):
 class SSLWantWrite(SSLError):
     pass
 
-
+'''
 def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
     cdef:
         EVP_CIPHER_CTX *ctx = NULL
@@ -595,7 +606,7 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen) except? NULL:
     elif keylen == 256 / 8:
         return EVP_aes_256_gcm()
     raise ValueError("keylen must be 128, 192, or 256 bits")
-
+'''
 
 cdef _library_init():
     SSL_load_error_strings()
@@ -603,17 +614,3 @@ cdef _library_init():
 
 
 _library_init()
-
-
-def test():
-    import timeit
-    dur = timeit.timeit(lambda: aes_gcm_encrypt('abc', 'a' * 16, 'a' * 12), number=1000)
-    print dur * 1000, "us per aes gcm encrypt"
-
-    plaintext = "hello world!"
-    ciphertext, tag = aes_gcm_encrypt(plaintext, 'a' * 16, 'a' * 12)
-    assert plaintext == aes_gcm_decrypt(ciphertext, 'a' * 16, 'a' * 12, tag)
-
-    dur2 = timeit.timeit(lambda: aes_gcm_decrypt(ciphertext, 'a' * 16, 'a' * 12, tag), number=1000)
-    print dur2 * 1000, "us per aes gcm decrypt"
-
