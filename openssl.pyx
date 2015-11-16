@@ -463,7 +463,7 @@ cdef class Socket:
         if timeout is None:
             timeout = socket.getdefaulttimeout()
             if timeout is None:
-                timeout = 30
+                timeout = -1
         self.set_timeout(timeout)
         if self.do_handshake_on_connect:
             try:
@@ -497,10 +497,11 @@ cdef class Socket:
         return result
 
     def set_timeout(self, double timeout):
+        'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
         cdef long nonblocking
 
         self.timeout = timeout
-        nonblocking = self.timeout >= 0.0  # 0 for blocking IO, 1 for nonblocking IO
+        nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
         BIO_set_nbio(SSL_get_rbio(self.ssl), nonblocking)
         BIO_set_nbio(SSL_get_wbio(self.ssl), nonblocking)
 
