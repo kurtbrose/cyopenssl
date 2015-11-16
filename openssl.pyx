@@ -206,7 +206,7 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from cpython cimport bool, PyErr_SetFromWindowsErr
+from cpython cimport bool, PyErr_SetExcFromWindowsErr
 
 
 cdef class Context:
@@ -214,8 +214,8 @@ cdef class Context:
         SSL_CTX *ctx
         bytes password
 
-    def __cinit__(self, method, verify=True, cerfile=None, keyfile=None,
-                  ca_certs=None, passphrase=None):
+    def __cinit__(self, method, bool verify=True, bytes certfile=None, bytes keyfile=None,
+                  bytes ca_certs=None, bytes passphrase=None):
         self.ctx = NULL
         if method == "TLSv1":
             self.ctx = SSL_CTX_new(TLSv1_method())
@@ -252,7 +252,7 @@ cdef class Context:
         # need to figure out how to create a "dynamic" C callback here
         # ... this is a bit tricky, there is no passed parameter
 
-    def use_cerificate_chain_file(self, bytes certfile):
+    def use_certificate_chain_file(self, bytes certfile):
         '''
         Load and use the certificate file at location certfile
         '''
@@ -310,9 +310,9 @@ cdef class Context:
             raise ValueError("private key and public cert do not match")
 
     def load_verify_locations(self, bytes pemfile not None):
-        if SSL_CTX_load_verify_locations(self.ctx, pemfile, NULL):
+        if not SSL_CTX_load_verify_locations(self.ctx, pemfile, NULL):
             raise ValueError("error using load_verify_locations(" + repr(pemfile) + ")"
-                + _pop_and_format_error_list)
+                + _pop_and_format_error_list())
 
     def set_cipher_list(self, bytes cipher_list not None):
         if not SSL_CTX_set_cipher_list(self.ctx, cipher_list):
@@ -485,7 +485,11 @@ cdef class Socket:
         return response
 
     def do_handshake(self, double timeout=-1):
-        return self._do_ssl(DO_SSL_HANDSHAKE, NULL, 0, timeout)
+        cdef int result = self._do_ssl(DO_SSL_HANDSHAKE, NULL, 0, timeout)
+        if result <= 0:
+            # sometimes when handshake fails, SSL_get_error still returns 0
+            raise SSLError('SSL handshake failed: {0}'.format(result))
+        return result
 
     def set_timeout(self, double timeout):
         self.timeout = timeout
@@ -518,7 +522,7 @@ cdef class Socket:
             elif err == SSL_ERROR_SYSCALL:
                 # TODO: how to make this select the right option
                 # (e.g. ifdef WIN32)
-                PyErr_SetFromWindowsErr(0)
+                PyErr_SetExcFromWindowsErr(SSLError, 0)
                 # raise  # SSLError("SSL_ERROR_SYSCALL")
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0

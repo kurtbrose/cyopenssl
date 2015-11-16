@@ -18,6 +18,7 @@ def run_one_server(ctx, port=PORT):
     c, a = s.accept()
     print "coonstructing server socket"
     c2 = Socket(s, ctx, server_side=True, do_handshake_on_connect=False)
+    c2.do_handshake()
     c2.send('hello world!')
 
 
@@ -25,6 +26,7 @@ def run_one_client(ctx, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     print "constructing client socket"
     s2 = Socket(s, ctx, do_handshake_on_connect=False)
+    s2.do_handshake()
     print "client recieved", s2.recv(1024)
 
 
@@ -40,8 +42,11 @@ def init_contexts():
     for s in ['1k', '2k', '4k']:
         ctx = Context('TLSv1')
         ctx.set_password('test')
-        ctx.use_cerificate_chain_file('{0}/cert{1}.pem'.format(RESOURCES, s))
+        ctx.use_certificate_chain_file('{0}/cert{1}.pem'.format(RESOURCES, s))
+        ctx.load_client_CA_list('{0}/cert{1}.pem'.format(RESOURCES, s))
+        ctx.load_verify_locations('{0}/cert{1}.pem'.format(RESOURCES, s))
         ctx.use_privatekey_file('{0}/key{1}.pem'.format(RESOURCES, s))
+        ctx.check_privatekey()
         contexts.append(ctx)
     return contexts
 
