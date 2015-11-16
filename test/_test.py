@@ -16,6 +16,7 @@ def run_one_server(ctx, port=PORT):
     s.bind( ('127.100.100.1', port) )
     s.listen(300)
     c, a = s.accept()
+    assert c.getpeername(), "accepted socket closed"
     print "coonstructing server socket"
     c2 = Socket(s, ctx, server_side=True, do_handshake_on_connect=False)
     c2.do_handshake()
@@ -24,6 +25,7 @@ def run_one_server(ctx, port=PORT):
 
 def run_one_client(ctx, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
+    assert s.getpeername(), "connected socket closed"
     print "constructing client socket"
     s2 = Socket(s, ctx, do_handshake_on_connect=False)
     s2.do_handshake()

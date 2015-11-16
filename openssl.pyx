@@ -53,6 +53,8 @@ cdef extern from "openssl/bio.h":
     ctypedef struct BIO:
         pass
 
+    long BIO_set_nbio(BIO *b, long n)
+
 
 cdef extern from "openssl/x509.h":
     ctypedef struct X509:
@@ -446,12 +448,10 @@ cdef class Socket:
         self.suppress_ragged_eofs = suppress_ragged_eofs
         self.fileno = sock.fileno()
         self.sock = sock
-        self.timeout = 10  # TODO: timeout defaulting behavior
         if cipherlist:
             if not SSL_set_cipher_list(self.ssl, cipherlist):
                 raise ValueError("no ciphers matched " + repr(cipherlist))
         if not SSL_set_fd(self.ssl, self.fileno):
-            import socket
             raise socket.error("SSL_set_fd failed " + _pop_and_format_error_list())
         if self.server_side:
             SSL_set_accept_state(self.ssl)
@@ -459,6 +459,12 @@ cdef class Socket:
             SSL_set_connect_state(self.ssl)
             if session is not None:
                 SSL_set_session(self.ssl, session.sess)
+        timeout = sock.gettimeout()
+        if timeout is None:
+            timeout = socket.getdefaulttimeout()
+            if timeout is None:
+                timeout = 30
+        self.set_timeout(timeout)
         if self.do_handshake_on_connect:
             try:
                 self.sock.getpeername()
@@ -491,9 +497,14 @@ cdef class Socket:
         return result
 
     def set_timeout(self, double timeout):
-        self.timeout = timeout
+        cdef long nonblocking
 
-    cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout):
+        self.timeout = timeout
+        nonblocking = self.timeout >= 0.0  # 0 for blocking IO, 1 for nonblocking IO
+        BIO_set_nbio(SSL_get_rbio(self.ssl), nonblocking)
+        BIO_set_nbio(SSL_get_wbio(self.ssl), nonblocking)
+
+    cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
             int ret = 0, err = 0
 
