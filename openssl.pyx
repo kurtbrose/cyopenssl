@@ -519,7 +519,7 @@ cdef class Socket:
                 # TODO: how to make this select the right option
                 # (e.g. ifdef WIN32)
                 PyErr_SetFromWindowsErr(0)
-                raise  # SSLError("SSL_ERROR_SYSCALL")
+                # raise  # SSLError("SSL_ERROR_SYSCALL")
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0
             elif err == SSL_ERROR_WANT_CONNECT:
