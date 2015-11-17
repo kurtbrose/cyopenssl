@@ -2,6 +2,8 @@ from libc cimport string
 
 
 cdef extern from "openssl/evp.h":
+    void OpenSSL_add_all_algorithms()
+
     ctypedef struct EVP_CIPHER_CTX:
         pass
 
@@ -49,13 +51,6 @@ cdef extern from "openssl/evp.h":
     int EVP_CTRL_GCM_SET_TAG
 
 
-cdef extern from "openssl/bio.h":
-    ctypedef struct BIO:
-        pass
-
-    long BIO_set_nbio(BIO *b, long n)
-
-
 cdef extern from "openssl/x509.h":
     ctypedef struct X509:
         pass
@@ -92,7 +87,11 @@ cdef extern from "openssl/bio.h":
         pass
 
     BIO *BIO_new_mem_buf(void *buf, int len)
+    long BIO_set_nbio(BIO *b, long n)
+    int BIO_test_flags(BIO *b, int flags)
     int BIO_free(BIO *a)
+
+    int BIO_FLAGS_READ, BIO_FLAGS_WRITE, BIO_FLAGS_IO_SPECIAL, BIO_FLAGS_SHOULD_RETRY
 
 
 cdef extern from "openssl/ssl.h" nogil:
@@ -209,7 +208,7 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno
+from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno, PyErr_Clear
 
 
 cdef class Context:
@@ -445,6 +444,8 @@ cdef class Socket:
             Session session=None, bytes cipherlist=b''):
 
         self.ssl = SSL_new(context.ctx)
+        if self.ssl == NULL:
+            raise Exception("SSL_new error")
         self.server_side = server_side
         self.do_handshake_on_connect = do_handshake_on_connect
         self.suppress_ragged_eofs = suppress_ragged_eofs
@@ -468,7 +469,7 @@ cdef class Socket:
             if timeout is None:
                 timeout = -1
         self.set_timeout(timeout)
-        if self.do_handshake_on_connect:
+        if self.do_handshake_on_connect and not server_side:
             try:
                 self.sock.getpeername()
             except:
@@ -517,6 +518,7 @@ cdef class Socket:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:
             ssl = self.ssl
+            flush_errors()
             with nogil:
                 if op == DO_SSL_WRITE:
                     ret = SSL_write(ssl, data, size)
@@ -530,17 +532,14 @@ cdef class Socket:
             elif err == SSL_ERROR_SSL:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
-                print "WANT READ" * 10
                 raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
                 raise SSLWantWrite()
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
             elif err == SSL_ERROR_SYSCALL:
-                IF UNAME_SYSNAME == "Windows":
-                    PyErr_SetExcFromWindowsErr(SSLError, 0)
-                ELSE:
-                    PyErr_SetFromErrno(SSLError)
+                if not self._handle_syscall_error(ret, err):
+                    return 0
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0
             elif err == SSL_ERROR_WANT_CONNECT:
@@ -549,6 +548,40 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_WANT_ACCEPT")
             else:
                 raise SSLError("unknown")
+
+    cdef int _handle_syscall_error(self, int ret, int err) except *:
+        cdef:
+            int rflags, wflags
+        rflags = BIO_test_flags(SSL_get_rbio(self.ssl), 0xFF)
+        wflags = BIO_test_flags(SSL_get_wbio(self.ssl), 0xFF)
+        if self._check_flags(rflags):
+            return 1
+        if self._check_flags(wflags):
+            return 1
+        if ret == 0:
+            errmsg = _pop_and_format_error_list()
+            if errmsg:
+                raise SSLError(errmsg)
+            if self.suppress_ragged_eofs:
+                return 0
+            else:
+                raise SSLError("EOF in violation of protocol")
+        elif ret == -1:
+            IF UNAME_SYSNAME == "Windows":
+                PyErr_SetExcFromWindowsErr(SSLError, 0)
+            ELSE:
+                PyErr_SetFromErrno(SSLError)
+
+    cdef int _check_flags(self, flags) except *:
+        if flags & BIO_FLAGS_SHOULD_RETRY:
+            if flags & BIO_FLAGS_READ:
+                pass
+            elif flags & BIO_FLAGS_WRITE:
+                pass
+            else:
+                raise SSLError("BIO_SHOULD_RETRY but neither read nor write set")
+            return 1
+        return 0
 
     def state_string(self):
         return <bytes>SSL_state_string(self.ssl)
@@ -566,6 +599,15 @@ cdef class Socket:
         else:
             flags = flags & (~ SSL_MODE_AUTO_RETRY)
         SSL_set_mode(self.ssl, flags)
+
+
+cdef void flush_errors():
+    #TODO: better way to clear out previous errors
+    IF UNAME_SYSNAME == "Windows":
+        PyErr_SetExcFromWindowsErr(SSLError, 0)
+    ELSE:
+        PyErr_SetFromErrno(SSLError)
+    PyErr_Clear()
 
 
 def ssl_mode2dict(int flags):
@@ -662,6 +704,7 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen) except? NULL:
 cdef _library_init():
     SSL_load_error_strings()
     SSL_library_init()
+    OpenSSL_add_all_algorithms()
 
 
 _library_init()
