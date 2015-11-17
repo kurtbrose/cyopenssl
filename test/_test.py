@@ -39,6 +39,11 @@ def thread_network_test(ctx):
     run_one_client(ctx)
 
 
+def google_client_test(ctx):
+    s = socket.create_connection(('google.com', 443))
+    s2 = Socket(s, ctx)
+
+
 def init_contexts():
     contexts = []
     for s in ['1k', '2k', '4k']:
