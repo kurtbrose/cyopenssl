@@ -2,6 +2,7 @@ import socket
 import select
 import threading
 import os.path
+import time
 import pprint
 
 from openssl import *
@@ -53,6 +54,7 @@ def thread_network_test(ctx):
     server = threading.Thread(target=run_one_server, args=(ctx,))
     server.daemon = True
     server.start()
+    time.sleep(0.25)  # give the server time to start
     run_one_client(ctx)
 
 
