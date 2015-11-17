@@ -54,6 +54,7 @@ cdef extern from "openssl/bio.h":
         pass
 
     long BIO_set_nbio(BIO *b, long n)
+    int BIO_pending(BIO *b)
 
 
 cdef extern from "openssl/x509.h":
@@ -91,7 +92,14 @@ cdef extern from "openssl/bio.h":
     ctypedef struct BIO:
         pass
 
+    ctypedef struct BIO_METHOD:
+        pass
+
     BIO *BIO_new_mem_buf(void *buf, int len)
+    BIO *BIO_new(BIO_METHOD *method)
+    int BIO_read(BIO *b, void *buf, int len)
+    int BIO_write(BIO *b, const void *buf, int len)
+    BIO_METHOD *BIO_s_mem()
     int BIO_free(BIO *a)
 
 
@@ -127,6 +135,7 @@ cdef extern from "openssl/ssl.h" nogil:
     void SSL_set_accept_state(SSL *ssl)
     BIO *SSL_get_rbio(SSL *ssl)
     BIO *SSL_get_wbio(SSL *ssl)
+    void SSL_set_bio(SSL *ssl, BIO *rbio, BIO *wbio)
     long SSL_get_verify_result(const SSL *ssl)
     X509 *SSL_get_peer_certificate(const SSL *ssl)
     SSL_CIPHER *SSL_get_current_cipher(const SSL *ssl)
@@ -437,6 +446,8 @@ cdef class Socket:
         object sock
         int fileno
         double timeout
+        BIO *rbio, *wbio
+        bytearray buf
 
     def __cinit__(self, sock, Context context not None, bool server_side=False,
             bool do_handshake_on_connect=True, bool suppress_ragged_eofs=True,
@@ -447,25 +458,33 @@ cdef class Socket:
         self.do_handshake_on_connect = do_handshake_on_connect
         self.suppress_ragged_eofs = suppress_ragged_eofs
         self.fileno = sock.fileno()
-        print "fileno", self.fileno
+        # TODO: should these be read/write?
+        self.rbio = BIO_new(BIO_s_mem())  # MemBIO()
+        self.wbio = BIO_new(BIO_s_mem())  # MemBIO()
+        self.buf = bytearray(32 * 1024)
+        SSL_set_bio(self.ssl, rbio=self.rbio, wbio=self.wbio)
         self.sock = sock
         if cipherlist:
             if not SSL_set_cipher_list(self.ssl, cipherlist):
                 raise ValueError("no ciphers matched " + repr(cipherlist))
+        '''
         if not SSL_set_fd(self.ssl, self.fileno):
             raise socket.error("SSL_set_fd failed " + _pop_and_format_error_list())
+        '''
         if self.server_side:
             SSL_set_accept_state(self.ssl)
         else:
             SSL_set_connect_state(self.ssl)
             if session is not None:
                 SSL_set_session(self.ssl, session.sess)
+        '''
         timeout = sock.gettimeout()
         if timeout is None:
             timeout = socket.getdefaulttimeout()
             if timeout is None:
                 timeout = -1
         self.set_timeout(timeout)
+        '''
         if self.do_handshake_on_connect:
             try:
                 self.sock.getpeername()
@@ -497,23 +516,25 @@ cdef class Socket:
             raise SSLError('SSL handshake failed: {0}'.format(result))
         return result
 
-    def set_timeout(self, double timeout):
-        'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
-        cdef long nonblocking
+    def settimeout(self, timeout):
+        self.sock.settimeout(timeout)
+        #'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
+        #cdef long nonblocking
 
-        self.timeout = timeout
-        nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
-        BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
-        BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
+        #self.timeout = timeout
+        #nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
+        # BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
+        # BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
             int ret = 0, err = 0
+            int io_size = 0
             SSL *ssl
 
         if timeout < 0:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
-        while 1:
+        while 1:  # TODO: apply "logical" timeout on top of SSL_WANT_READ / SSL_WANT_WRITE
             ssl = self.ssl
             with nogil:
                 if op == DO_SSL_WRITE:
@@ -523,15 +544,26 @@ cdef class Socket:
                 elif op == DO_SSL_HANDSHAKE:
                     ret = SSL_do_handshake(ssl)
             err = SSL_get_error(self.ssl, ret)
+            io_size = BIO_pending(self.wbio)
+            if io_size:
+                io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
+                self.sock.sendall(self.buf[:io_size])
             if err == SSL_ERROR_NONE:
                 return ret
             elif err == SSL_ERROR_SSL:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
-                print "WANT READ" * 10
-                raise SSLWantRead()
+                # xfer data from socket to BIO
+                io_size = self.sock.recv_into(self.buf, 32 * 1024)
+                if io_size == 0:
+                    return 0
+                BIO_write(self.rbio, <char *>self.buf, io_size)
+                # raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
-                raise SSLWantWrite()
+                # xfer data from BIO to socket
+                io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
+                self.sock.sendall(self.buf[:io_size])
+                # raise SSLWantWrite()
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
             elif err == SSL_ERROR_SYSCALL:
@@ -547,7 +579,11 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_WANT_ACCEPT")
             else:
                 raise SSLError("unknown")
- 
+
+    def __dealloc__(self):
+        if self.ssl:
+            SSL_free(self.ssl)
+
 
 class SSLError(socket.error):
     pass
@@ -559,6 +595,17 @@ class SSLWantRead(SSLError):
 
 class SSLWantWrite(SSLError):
     pass
+
+
+cdef class MemBIO:
+    cdef BIO *bio
+
+    def __cinit__(self):
+        self.bio = BIO_new(BIO_s_mem())
+
+    def __dealloc__(self):
+        if self.bio:
+            BIO_free(self.bio)
 
 '''
 def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
