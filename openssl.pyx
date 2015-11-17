@@ -133,6 +133,8 @@ cdef extern from "openssl/ssl.h" nogil:
     stack_st_X509_NAME *SSL_load_client_CA_file(char *file)
     int SSL_set_cipher_list(SSL *ssl, char *str)
     long SSL_ctrl(SSL *ssl, int cmd, long larg, char *parg)
+    const char *SSL_state_string(const SSL *ssl)
+    const char *SSL_state_string_long(const SSL *ssl)
 
     SSL_CTX *SSL_CTX_new(const SSL_METHOD *method)
     void SSL_CTX_free(SSL_CTX *ctx)
@@ -547,6 +549,12 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_WANT_ACCEPT")
             else:
                 raise SSLError("unknown")
+
+    def state_string(self):
+        return <bytes>SSL_state_string(self.ssl)
+
+    def state_string_long(self):
+        return <bytes>SSL_state_string_long(self.ssl)
  
 
 class SSLError(socket.error):

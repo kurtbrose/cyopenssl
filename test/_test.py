@@ -1,9 +1,9 @@
 import socket
+import select
 import threading
 import os.path
 
 from openssl import *
-
 
 RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 PORT = 9898
@@ -19,7 +19,16 @@ def run_one_server(ctx, port=PORT):
     assert c.getpeername(), "accepted socket closed"
     print "coonstructing server socket"
     c2 = Socket(s, ctx, server_side=True, do_handshake_on_connect=False)
-    c2.do_handshake()
+    print "STATE: " +  c2.state_string_long()
+    while 1:
+        try:
+            c2.do_handshake()
+            break
+        except SSLWantRead:
+            select.select([c], [], [], 0)
+        except:
+            print "STATE: " + c2.state_string_long()
+            raise
     c2.send('hello world!')
 
 
