@@ -201,6 +201,7 @@ cdef extern from "openssl/ssl.h" nogil:
 
 cdef extern from "openssl/err.h":
     unsigned long ERR_get_error()
+    unsigned long ERR_peek_error()
     char *ERR_error_string(unsigned long e, char *buf)
     const char *ERR_lib_error_string(unsigned long e)
     const char *ERR_func_error_string(unsigned long e)
@@ -469,7 +470,7 @@ cdef class Socket:
             if timeout is None:
                 timeout = -1
         self.set_timeout(timeout)
-        if self.do_handshake_on_connect and not server_side:
+        if self.do_handshake_on_connect:
             try:
                 self.sock.getpeername()
             except:
@@ -505,9 +506,9 @@ cdef class Socket:
         cdef long nonblocking
 
         self.timeout = timeout
-        nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
-        BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
-        BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
+        #nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
+        #BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
+        #BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
@@ -518,7 +519,7 @@ cdef class Socket:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:
             ssl = self.ssl
-            flush_errors()
+            # flush_errors()
             with nogil:
                 if op == DO_SSL_WRITE:
                     ret = SSL_write(ssl, data, size)
@@ -526,6 +527,8 @@ cdef class Socket:
                     ret = SSL_read(ssl, data, size)
                 elif op == DO_SSL_HANDSHAKE:
                     ret = SSL_do_handshake(ssl)
+            if ret > 0 and (op == DO_SSL_WRITE or op == DO_SSL_READ):
+                return ret
             err = SSL_get_error(self.ssl, ret)
             if err == SSL_ERROR_NONE:
                 return ret
@@ -552,6 +555,10 @@ cdef class Socket:
     cdef int _handle_syscall_error(self, int ret, int err) except *:
         cdef:
             int rflags, wflags
+
+        if ERR_peek_error():
+            raise SSLError(_pop_and_format_error_list)
+
         rflags = BIO_test_flags(SSL_get_rbio(self.ssl), 0xFF)
         wflags = BIO_test_flags(SSL_get_wbio(self.ssl), 0xFF)
         if self._check_flags(rflags):
@@ -601,6 +608,7 @@ cdef class Socket:
         SSL_set_mode(self.ssl, flags)
 
 
+'''
 cdef void flush_errors():
     #TODO: better way to clear out previous errors
     IF UNAME_SYSNAME == "Windows":
@@ -608,6 +616,7 @@ cdef void flush_errors():
     ELSE:
         PyErr_SetFromErrno(SSLError)
     PyErr_Clear()
+'''
 
 
 def ssl_mode2dict(int flags):

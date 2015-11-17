@@ -45,6 +45,7 @@ def run_one_client(ctx, port=PORT):
     print "recieved plain data", s.recv(1024)
     s2 = Socket(s, ctx, do_handshake_on_connect=False)
     s2.do_handshake()
+    s2.send('hello!')
     print "client recieved", s2.recv(1024)
 
 
