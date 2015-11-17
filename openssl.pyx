@@ -161,6 +161,8 @@ cdef extern from "openssl/ssl.h" nogil:
     long SSL_CTX_set_options(SSL_CTX *ctx, long options)
     long SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509)
     int SSL_CTX_check_private_key(const SSL_CTX *ctx)
+    long SSL_set_mode(SSL *ssl, long mode)
+    long SSL_get_mode(SSL *ssl)
 
     void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb)
     void SSL_CTX_set_default_passwd_cb_userdata(SSL_CTX *ctx, void *u)
@@ -176,9 +178,7 @@ cdef extern from "openssl/ssl.h" nogil:
     void SSL_SESSION_free(SSL_SESSION* sess)
 
     # set_verify parameters
-    int SSL_VERIFY_NONE
-    int SSL_VERIFY_PEER
-    int SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+    int SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_VERIFY_FAIL_IF_NO_PEER_CERT
     int SSL_VERIFY_CLIENT_ONCE
 
     # SSL error codes
@@ -186,18 +186,18 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_ERROR_ZERO_RETURN, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_CONNECT
     int SSL_ERROR_WANT_X509_LOOKUP, SSL_ERROR_WANT_ACCEPT
 
-    int SSL_FILETYPE_PEM
-    int SSL_FILETYPE_ASN1
+    int SSL_FILETYPE_PEM, SSL_FILETYPE_ASN1
 
     # session cache options
-    long SSL_SESS_CACHE_OFF
-    long SSL_SESS_CACHE_CLIENT
-    long SSL_SESS_CACHE_SERVER
-    long SSL_SESS_CACHE_BOTH
-    long SSL_SESS_CACHE_NO_AUTO_CLEAR
-    long SSL_SESS_CACHE_NO_INTERNAL_LOOKUP
-    long SSL_SESS_CACHE_NO_INTERNAL_STORE
-    long SSL_SESS_CACHE_NO_INTERNAL
+    long SSL_SESS_CACHE_OFF, SSL_SESS_CACHE_CLIENT, SSL_SESS_CACHE_SERVER
+    long SSL_SESS_CACHE_BOTH, SSL_SESS_CACHE_NO_AUTO_CLEAR, SSL_SESS_CACHE_NO_INTERNAL_LOOKUP
+    long SSL_SESS_CACHE_NO_INTERNAL_STORE, SSL_SESS_CACHE_NO_INTERNAL
+
+    # SSL mode flags
+    long SSL_MODE_ENABLE_PARTIAL_WRITE, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
+    long SSL_MODE_AUTO_RETRY, SSL_MODE_RELEASE_BUFFERS
+    long SSL_MODE_RELEASE_BUFFERS, SSL_MODE_SEND_FALLBACK_SCSV
+
 
 
 cdef extern from "openssl/err.h":
@@ -555,7 +555,28 @@ cdef class Socket:
 
     def state_string_long(self):
         return <bytes>SSL_state_string_long(self.ssl)
- 
+
+    def ssl_mode_dict(self):
+        return ssl_mode2dict(SSL_get_mode(self.ssl))
+
+    def set_auto_retry(self, bool auto_retry not None):
+        cdef long flags = SSL_get_mode(self.ssl)
+        if auto_retry:
+            flags = flags | SSL_MODE_AUTO_RETRY
+        else:
+            flags = flags & (~ SSL_MODE_AUTO_RETRY)
+        SSL_set_mode(self.ssl, flags)
+
+
+def ssl_mode2dict(int flags):
+    flag_dict = {}
+    flag_dict['ENABLE_PARTIAL_WRITE'] = bool(SSL_MODE_ENABLE_PARTIAL_WRITE & flags)
+    flag_dict['ACCEPT_MOVING_WRITE_BUFFER'] = bool(SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER & flags)
+    flag_dict['AUTO_RETRY'] = bool(SSL_MODE_AUTO_RETRY & flags)
+    flag_dict['RELEASE_BUFFERS'] = bool(SSL_MODE_RELEASE_BUFFERS & flags)
+    flag_dict['SEND_FALLBACK_SCSV'] = bool(SSL_MODE_SEND_FALLBACK_SCSV & flags)
+    return flag_dict
+
 
 class SSLError(socket.error):
     pass

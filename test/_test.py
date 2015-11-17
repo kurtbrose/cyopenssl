@@ -2,6 +2,7 @@ import socket
 import select
 import threading
 import os.path
+import pprint
 
 from openssl import *
 
@@ -19,6 +20,9 @@ def run_one_server(ctx, port=PORT):
     assert c.getpeername(), "accepted socket closed"
     print "coonstructing server socket"
     c2 = Socket(s, ctx, server_side=True, do_handshake_on_connect=False)
+    c2.set_auto_retry(True)
+    print "FLAGS"
+    pprint.pprint(c2.ssl_mode_dict())
     print "STATE: " +  c2.state_string_long()
     while 1:
         try:
