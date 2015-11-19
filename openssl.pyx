@@ -246,6 +246,7 @@ cdef class Context:
     cdef:
         SSL_CTX *ctx
         bytes password
+        PasswordInfo password_info
 
     def __cinit__(self, method, bool verify=True, bytes certfile=None, bytes keyfile=None,
                   bytes ca_certs=None, bytes passphrase=None):
@@ -335,7 +336,9 @@ cdef class Context:
 
     def set_password(self, bytes password not None):
         self.password = password
-        SSL_CTX_set_default_passwd_cb_userdata(self.ctx, <void *>self.password)
+        self.password_info.nbytes = len(password)
+        self.password_info.bytes = <char*>password
+        SSL_CTX_set_default_passwd_cb_userdata(self.ctx, &self.password_info)
         SSL_CTX_set_default_passwd_cb(self.ctx, passwd_cb_passthru)
 
     def check_privatekey(self):
@@ -356,10 +359,11 @@ cdef class Context:
             SSL_CTX_free(self.ctx)
 
 
-cdef int passwd_cb_passthru(char *buf, int size, int rwflag, void *userdata):
-    strdata = <bytes>userdata
-    string.strncpy(buf, <char *>strdata, len(strdata))
-    return len(strdata)
+cdef int passwd_cb_passthru(char *buf, int size, int rwflag, void *userdata) nogil:
+    cdef PasswordInfo *password_info
+    password_info = <PasswordInfo*>userdata
+    string.strncpy(buf, password_info.bytes, password_info.nbytes)
+    return password_info.nbytes
 
 
 cdef class Session:
