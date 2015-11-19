@@ -1,7 +1,8 @@
 from libc cimport string
+from libc.stdio cimport printf
 
 
-cdef extern from "openssl/evp.h":
+cdef extern from "openssl/evp.h" nogil:
     void OpenSSL_add_all_algorithms()
 
     ctypedef struct EVP_CIPHER_CTX:
@@ -51,7 +52,7 @@ cdef extern from "openssl/evp.h":
     int EVP_CTRL_GCM_SET_TAG
 
 
-cdef extern from "openssl/x509.h":
+cdef extern from "openssl/x509.h" nogil:
     ctypedef struct X509:
         pass
 
@@ -71,18 +72,18 @@ cdef extern from "openssl/x509.h":
         pass
 
 
-cdef extern from "openssl/x509_vfy.h":
+cdef extern from "openssl/x509_vfy.h" nogil:
     ctypedef struct X509_STORE_CTX:
         pass
 
 
-cdef extern from "openssl/pem.h":
+cdef extern from "openssl/pem.h" nogil:
     ctypedef int pem_password_cb(char *buf, int size, int rwflag, void *userdata)
     EVP_PKEY *PEM_read_bio_PrivateKey(
         BIO *bp, EVP_PKEY **x, pem_password_cb *cb, void *u)
 
 
-cdef extern from "openssl/bio.h":
+cdef extern from "openssl/bio.h" nogil:
     ctypedef struct BIO:
         pass
 
@@ -134,6 +135,16 @@ cdef extern from "openssl/ssl.h" nogil:
     long SSL_ctrl(SSL *ssl, int cmd, long larg, char *parg)
     const char *SSL_state_string(const SSL *ssl)
     const char *SSL_state_string_long(const SSL *ssl)
+    long SSL_set_mode(SSL *ssl, long mode)
+    long SSL_get_mode(SSL *ssl)
+
+    void SSL_set_info_callback(SSL *ssl, void (*callback)(SSL*, int, int))
+
+    const char *SSL_alert_type_string(int value)
+    const char *SSL_alert_type_string_long(int value)
+
+    const char *SSL_alert_desc_string(int value)
+    const char *SSL_alert_desc_string_long(int value)
 
     SSL_CTX *SSL_CTX_new(const SSL_METHOD *method)
     void SSL_CTX_free(SSL_CTX *ctx)
@@ -160,8 +171,6 @@ cdef extern from "openssl/ssl.h" nogil:
     long SSL_CTX_set_options(SSL_CTX *ctx, long options)
     long SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509)
     int SSL_CTX_check_private_key(const SSL_CTX *ctx)
-    long SSL_set_mode(SSL *ssl, long mode)
-    long SSL_get_mode(SSL *ssl)
 
     void SSL_CTX_set_default_passwd_cb(SSL_CTX *ctx, pem_password_cb *cb)
     void SSL_CTX_set_default_passwd_cb_userdata(SSL_CTX *ctx, void *u)
@@ -197,6 +206,12 @@ cdef extern from "openssl/ssl.h" nogil:
     long SSL_MODE_AUTO_RETRY, SSL_MODE_RELEASE_BUFFERS
     long SSL_MODE_RELEASE_BUFFERS, SSL_MODE_SEND_FALLBACK_SCSV
 
+    # SSL callback flags
+    int SSL_CB_LOOP, SSL_CB_EXIT, SSL_CB_READ, SSL_CB_WRITE, SSL_CB_ALERT
+
+    # SSL states
+    int SSL_ST_MASK, SSL_ST_CONNECT, SSL_ST_ACCEPT
+
 
 
 cdef extern from "openssl/err.h":
@@ -210,6 +225,11 @@ cdef extern from "openssl/err.h":
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
 from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno, PyErr_Clear
+
+
+cdef struct PasswordInfo:
+    int nbytes
+    char *bytes
 
 
 cdef class Context:
@@ -460,6 +480,7 @@ cdef class Socket:
             raise socket.error("SSL_set_fd failed " + _pop_and_format_error_list())
         if self.server_side:
             SSL_set_accept_state(self.ssl)
+            SSL_set_info_callback(self.ssl, &print_ssl_state_callback)
         else:
             SSL_set_connect_state(self.ssl)
             if session is not None:
@@ -627,6 +648,43 @@ def ssl_mode2dict(int flags):
     flag_dict['RELEASE_BUFFERS'] = bool(SSL_MODE_RELEASE_BUFFERS & flags)
     flag_dict['SEND_FALLBACK_SCSV'] = bool(SSL_MODE_SEND_FALLBACK_SCSV & flags)
     return flag_dict
+
+
+cdef void print_ssl_state_callback(SSL *ssl, int where, int ret) nogil:
+    cdef:
+        int w, flags
+        const char *s
+        BIO *bio
+
+    w = where & ~SSL_ST_MASK
+    if w & SSL_ST_CONNECT:
+        s = "SSL_connect"
+    elif w & SSL_ST_ACCEPT:
+        s = "SSL_accept"
+    else:
+        s = "undefined"
+
+    if where & SSL_CB_LOOP:
+        printf("%s:%s\n", s, SSL_state_string_long(ssl))
+    elif where & SSL_CB_ALERT:
+        if where & SSL_CB_READ:
+            s = "read"
+            bio = SSL_get_rbio(ssl)
+        else:
+            s = "write"
+            bio = SSL_get_wbio(ssl)
+        flags = BIO_test_flags(bio, 0xFF)
+        if flags & BIO_FLAGS_SHOULD_RETRY:
+            printf("(Retry)")
+        if flags & BIO_FLAGS_READ:
+            printf("(Read)")
+        printf("SSL3 alert %s:%s:%s\n", s, 
+            SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret))
+    elif where & SSL_CB_EXIT:
+        if ret == 0:
+            printf("%s:failed in %s\n", s, SSL_state_string_long(ssl))
+        elif ret < 0:
+            printf("%s:error in %s\n", s, SSL_state_string_long(ssl))
 
 
 class SSLError(socket.error):
