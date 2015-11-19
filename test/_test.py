@@ -1,9 +1,11 @@
 import socket
+import select
 import threading
 import os.path
+import time
+import pprint
 
 from openssl import *
-
 
 RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 PORT = 9898
@@ -17,9 +19,23 @@ def run_one_server(ctx, port=PORT):
     s.listen(300)
     c, a = s.accept()
     assert c.getpeername(), "accepted socket closed"
+    c.send('hello!')
     print "coonstructing server socket"
     c2 = Socket(s, ctx, server_side=True, do_handshake_on_connect=False)
-    c2.do_handshake()
+    c2.set_auto_retry(True)
+    print "FLAGS"
+    pprint.pprint(c2.ssl_mode_dict())
+    print "STATE: " +  c2.state_string_long()
+    try:
+        c2.do_handshake()
+    except:
+        print "STATE: " + c2.state_string_long()
+        try:
+            c.getpeername()
+            print "accepted socket open"
+        except:
+            print "accepted socket closed"
+        raise
     c2.send('hello world!')
 
 
@@ -27,8 +43,10 @@ def run_one_client(ctx, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     assert s.getpeername(), "connected socket closed"
     print "constructing client socket"
+    print "recieved plain data", s.recv(1024)
     s2 = Socket(s, ctx, do_handshake_on_connect=False)
     s2.do_handshake()
+    s2.send('hello!')
     print "client recieved", s2.recv(1024)
 
 
@@ -36,6 +54,7 @@ def thread_network_test(ctx):
     server = threading.Thread(target=run_one_server, args=(ctx,))
     server.daemon = True
     server.start()
+    time.sleep(0.25)  # give the server time to start
     run_one_client(ctx)
 
 

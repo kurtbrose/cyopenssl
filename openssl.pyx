@@ -1,7 +1,10 @@
 from libc cimport string
+from libc.stdio cimport printf
 
 
-cdef extern from "openssl/evp.h":
+cdef extern from "openssl/evp.h" nogil:
+    void OpenSSL_add_all_algorithms()
+
     ctypedef struct EVP_CIPHER_CTX:
         pass
 
@@ -49,15 +52,7 @@ cdef extern from "openssl/evp.h":
     int EVP_CTRL_GCM_SET_TAG
 
 
-cdef extern from "openssl/bio.h":
-    ctypedef struct BIO:
-        pass
-
-    long BIO_set_nbio(BIO *b, long n)
-    int BIO_pending(BIO *b)
-
-
-cdef extern from "openssl/x509.h":
+cdef extern from "openssl/x509.h" nogil:
     ctypedef struct X509:
         pass
 
@@ -77,18 +72,18 @@ cdef extern from "openssl/x509.h":
         pass
 
 
-cdef extern from "openssl/x509_vfy.h":
+cdef extern from "openssl/x509_vfy.h" nogil:
     ctypedef struct X509_STORE_CTX:
         pass
 
 
-cdef extern from "openssl/pem.h":
+cdef extern from "openssl/pem.h" nogil:
     ctypedef int pem_password_cb(char *buf, int size, int rwflag, void *userdata)
     EVP_PKEY *PEM_read_bio_PrivateKey(
         BIO *bp, EVP_PKEY **x, pem_password_cb *cb, void *u)
 
 
-cdef extern from "openssl/bio.h":
+cdef extern from "openssl/bio.h" nogil:
     ctypedef struct BIO:
         pass
 
@@ -99,8 +94,14 @@ cdef extern from "openssl/bio.h":
     BIO *BIO_new(BIO_METHOD *method)
     int BIO_read(BIO *b, void *buf, int len)
     int BIO_write(BIO *b, const void *buf, int len)
+    long BIO_set_nbio(BIO *b, long n)
+    int BIO_pending(BIO *b)
     BIO_METHOD *BIO_s_mem()
+    long BIO_set_nbio(BIO *b, long n)
+    int BIO_test_flags(BIO *b, int flags)
     int BIO_free(BIO *a)
+
+    int BIO_FLAGS_READ, BIO_FLAGS_WRITE, BIO_FLAGS_IO_SPECIAL, BIO_FLAGS_SHOULD_RETRY
 
 
 cdef extern from "openssl/ssl.h" nogil:
@@ -142,6 +143,18 @@ cdef extern from "openssl/ssl.h" nogil:
     stack_st_X509_NAME *SSL_load_client_CA_file(char *file)
     int SSL_set_cipher_list(SSL *ssl, char *str)
     long SSL_ctrl(SSL *ssl, int cmd, long larg, char *parg)
+    const char *SSL_state_string(const SSL *ssl)
+    const char *SSL_state_string_long(const SSL *ssl)
+    long SSL_set_mode(SSL *ssl, long mode)
+    long SSL_get_mode(SSL *ssl)
+
+    void SSL_set_info_callback(SSL *ssl, void (*callback)(SSL*, int, int))
+
+    const char *SSL_alert_type_string(int value)
+    const char *SSL_alert_type_string_long(int value)
+
+    const char *SSL_alert_desc_string(int value)
+    const char *SSL_alert_desc_string_long(int value)
 
     SSL_CTX *SSL_CTX_new(const SSL_METHOD *method)
     void SSL_CTX_free(SSL_CTX *ctx)
@@ -183,9 +196,7 @@ cdef extern from "openssl/ssl.h" nogil:
     void SSL_SESSION_free(SSL_SESSION* sess)
 
     # set_verify parameters
-    int SSL_VERIFY_NONE
-    int SSL_VERIFY_PEER
-    int SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+    int SSL_VERIFY_NONE, SSL_VERIFY_PEER, SSL_VERIFY_FAIL_IF_NO_PEER_CERT
     int SSL_VERIFY_CLIENT_ONCE
 
     # SSL error codes
@@ -193,22 +204,29 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_ERROR_ZERO_RETURN, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_CONNECT
     int SSL_ERROR_WANT_X509_LOOKUP, SSL_ERROR_WANT_ACCEPT
 
-    int SSL_FILETYPE_PEM
-    int SSL_FILETYPE_ASN1
+    int SSL_FILETYPE_PEM, SSL_FILETYPE_ASN1
 
     # session cache options
-    long SSL_SESS_CACHE_OFF
-    long SSL_SESS_CACHE_CLIENT
-    long SSL_SESS_CACHE_SERVER
-    long SSL_SESS_CACHE_BOTH
-    long SSL_SESS_CACHE_NO_AUTO_CLEAR
-    long SSL_SESS_CACHE_NO_INTERNAL_LOOKUP
-    long SSL_SESS_CACHE_NO_INTERNAL_STORE
-    long SSL_SESS_CACHE_NO_INTERNAL
+    long SSL_SESS_CACHE_OFF, SSL_SESS_CACHE_CLIENT, SSL_SESS_CACHE_SERVER
+    long SSL_SESS_CACHE_BOTH, SSL_SESS_CACHE_NO_AUTO_CLEAR, SSL_SESS_CACHE_NO_INTERNAL_LOOKUP
+    long SSL_SESS_CACHE_NO_INTERNAL_STORE, SSL_SESS_CACHE_NO_INTERNAL
+
+    # SSL mode flags
+    long SSL_MODE_ENABLE_PARTIAL_WRITE, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
+    long SSL_MODE_AUTO_RETRY, SSL_MODE_RELEASE_BUFFERS
+    long SSL_MODE_RELEASE_BUFFERS, SSL_MODE_SEND_FALLBACK_SCSV
+
+    # SSL callback flags
+    int SSL_CB_LOOP, SSL_CB_EXIT, SSL_CB_READ, SSL_CB_WRITE, SSL_CB_ALERT
+
+    # SSL states
+    int SSL_ST_MASK, SSL_ST_CONNECT, SSL_ST_ACCEPT
+
 
 
 cdef extern from "openssl/err.h":
     unsigned long ERR_get_error()
+    unsigned long ERR_peek_error()
     char *ERR_error_string(unsigned long e, char *buf)
     const char *ERR_lib_error_string(unsigned long e)
     const char *ERR_func_error_string(unsigned long e)
@@ -216,7 +234,12 @@ cdef extern from "openssl/err.h":
 
 
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
-from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno
+from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno, PyErr_Clear
+
+
+cdef struct PasswordInfo:
+    int nbytes
+    char *bytes
 
 
 cdef class Context:
@@ -454,6 +477,8 @@ cdef class Socket:
             Session session=None, bytes cipherlist=b''):
 
         self.ssl = SSL_new(context.ctx)
+        if self.ssl == NULL:
+            raise Exception("SSL_new error")
         self.server_side = server_side
         self.do_handshake_on_connect = do_handshake_on_connect
         self.suppress_ragged_eofs = suppress_ragged_eofs
@@ -473,6 +498,7 @@ cdef class Socket:
         '''
         if self.server_side:
             SSL_set_accept_state(self.ssl)
+            SSL_set_info_callback(self.ssl, &print_ssl_state_callback)
         else:
             SSL_set_connect_state(self.ssl)
             if session is not None:
@@ -520,11 +546,10 @@ cdef class Socket:
         self.sock.settimeout(timeout)
         #'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
         #cdef long nonblocking
-
-        #self.timeout = timeout
+        self.timeout = timeout
         #nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
-        # BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
-        # BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
+        #BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
+        #BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
@@ -536,6 +561,7 @@ cdef class Socket:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:  # TODO: apply "logical" timeout on top of SSL_WANT_READ / SSL_WANT_WRITE
             ssl = self.ssl
+            # flush_errors()
             with nogil:
                 if op == DO_SSL_WRITE:
                     ret = SSL_write(ssl, data, size)
@@ -543,6 +569,8 @@ cdef class Socket:
                     ret = SSL_read(ssl, data, size)
                 elif op == DO_SSL_HANDSHAKE:
                     ret = SSL_do_handshake(ssl)
+            if ret > 0 and (op == DO_SSL_WRITE or op == DO_SSL_READ):
+                return ret
             err = SSL_get_error(self.ssl, ret)
             io_size = BIO_pending(self.wbio)
             if io_size:
@@ -567,10 +595,8 @@ cdef class Socket:
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
             elif err == SSL_ERROR_SYSCALL:
-                IF UNAME_SYSNAME == "Windows":
-                    PyErr_SetExcFromWindowsErr(SSLError, 0)
-                ELSE:
-                    PyErr_SetFromErrno(SSLError)
+                if not self._handle_syscall_error(ret, err):
+                    return 0
             elif err == SSL_ERROR_ZERO_RETURN:
                 return 0
             elif err == SSL_ERROR_WANT_CONNECT:
@@ -583,6 +609,119 @@ cdef class Socket:
     def __dealloc__(self):
         if self.ssl:
             SSL_free(self.ssl)
+
+    cdef int _handle_syscall_error(self, int ret, int err) except *:
+        cdef:
+            int rflags, wflags
+
+        if ERR_peek_error():
+            raise SSLError(_pop_and_format_error_list)
+
+        rflags = BIO_test_flags(SSL_get_rbio(self.ssl), 0xFF)
+        wflags = BIO_test_flags(SSL_get_wbio(self.ssl), 0xFF)
+        if self._check_flags(rflags):
+            return 1
+        if self._check_flags(wflags):
+            return 1
+        if ret == 0:
+            errmsg = _pop_and_format_error_list()
+            if errmsg:
+                raise SSLError(errmsg)
+            if self.suppress_ragged_eofs:
+                return 0
+            else:
+                raise SSLError("EOF in violation of protocol")
+        elif ret == -1:
+            IF UNAME_SYSNAME == "Windows":
+                PyErr_SetExcFromWindowsErr(SSLError, 0)
+            ELSE:
+                PyErr_SetFromErrno(SSLError)
+
+    cdef int _check_flags(self, flags) except *:
+        if flags & BIO_FLAGS_SHOULD_RETRY:
+            if flags & BIO_FLAGS_READ:
+                pass
+            elif flags & BIO_FLAGS_WRITE:
+                pass
+            else:
+                raise SSLError("BIO_SHOULD_RETRY but neither read nor write set")
+            return 1
+        return 0
+
+    def state_string(self):
+        return <bytes>SSL_state_string(self.ssl)
+
+    def state_string_long(self):
+        return <bytes>SSL_state_string_long(self.ssl)
+
+    def ssl_mode_dict(self):
+        return ssl_mode2dict(SSL_get_mode(self.ssl))
+
+    def set_auto_retry(self, bool auto_retry not None):
+        cdef long flags = SSL_get_mode(self.ssl)
+        if auto_retry:
+            flags = flags | SSL_MODE_AUTO_RETRY
+        else:
+            flags = flags & (~ SSL_MODE_AUTO_RETRY)
+        SSL_set_mode(self.ssl, flags)
+
+
+'''
+cdef void flush_errors():
+    #TODO: better way to clear out previous errors
+    IF UNAME_SYSNAME == "Windows":
+        PyErr_SetExcFromWindowsErr(SSLError, 0)
+    ELSE:
+        PyErr_SetFromErrno(SSLError)
+    PyErr_Clear()
+'''
+
+
+def ssl_mode2dict(int flags):
+    flag_dict = {}
+    flag_dict['ENABLE_PARTIAL_WRITE'] = bool(SSL_MODE_ENABLE_PARTIAL_WRITE & flags)
+    flag_dict['ACCEPT_MOVING_WRITE_BUFFER'] = bool(SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER & flags)
+    flag_dict['AUTO_RETRY'] = bool(SSL_MODE_AUTO_RETRY & flags)
+    flag_dict['RELEASE_BUFFERS'] = bool(SSL_MODE_RELEASE_BUFFERS & flags)
+    flag_dict['SEND_FALLBACK_SCSV'] = bool(SSL_MODE_SEND_FALLBACK_SCSV & flags)
+    return flag_dict
+
+
+cdef void print_ssl_state_callback(SSL *ssl, int where, int ret) nogil:
+    cdef:
+        int w, flags
+        const char *s
+        BIO *bio
+
+    w = where & ~SSL_ST_MASK
+    if w & SSL_ST_CONNECT:
+        s = "SSL_connect"
+    elif w & SSL_ST_ACCEPT:
+        s = "SSL_accept"
+    else:
+        s = "undefined"
+
+    if where & SSL_CB_LOOP:
+        printf("%s:%s\n", s, SSL_state_string_long(ssl))
+    elif where & SSL_CB_ALERT:
+        if where & SSL_CB_READ:
+            s = "read"
+            bio = SSL_get_rbio(ssl)
+        else:
+            s = "write"
+            bio = SSL_get_wbio(ssl)
+        flags = BIO_test_flags(bio, 0xFF)
+        if flags & BIO_FLAGS_SHOULD_RETRY:
+            printf("(Retry)")
+        if flags & BIO_FLAGS_READ:
+            printf("(Read)")
+        printf("SSL3 alert %s:%s:%s\n", s, 
+            SSL_alert_type_string_long(ret), SSL_alert_desc_string_long(ret))
+    elif where & SSL_CB_EXIT:
+        if ret == 0:
+            printf("%s:failed in %s\n", s, SSL_state_string_long(ssl))
+        elif ret < 0:
+            printf("%s:error in %s\n", s, SSL_state_string_long(ssl))
 
 
 class SSLError(socket.error):
@@ -680,6 +819,7 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen) except? NULL:
 cdef _library_init():
     SSL_load_error_strings()
     SSL_library_init()
+    OpenSSL_add_all_algorithms()
 
 
 _library_init()
