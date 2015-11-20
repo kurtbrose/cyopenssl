@@ -18,16 +18,16 @@ def run_one_server(ctx, port=PORT):
     s.bind( ('127.100.100.1', port) )
     s.listen(300)
     c, a = s.accept()
-    c2 = Socket(c, ctx, server_side=True, do_handshake_on_connect=False)
-    c2.do_handshake()
+    c2 = Socket(c, ctx, server_side=True)
     c2.send('hello world!')
+    print c.getpeername()
 
 
 def run_one_client(ctx, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
-    s2 = Socket(s, ctx, do_handshake_on_connect=False)
-    s2.do_handshake()
+    s2 = Socket(s, ctx)
     print "client recieved", s2.recv(1024)
+    print s.getpeername()
 
 
 def thread_network_test(ctx):
