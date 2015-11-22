@@ -11,7 +11,7 @@ RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 PORT = 9898
 
 
-def run_one_server(ctx, port=PORT):
+def run_one_server(ctx, logf, port=PORT):
     if type(ctx) is int:
         ctx = init_contexts()[ctx]
     s = socket.socket()
@@ -19,23 +19,35 @@ def run_one_server(ctx, port=PORT):
     s.listen(300)
     c, a = s.accept()
     c2 = Socket(c, ctx, server_side=True)
-    c2.send('hello world!')
-    print c.getpeername()
+    start = tfunc()
+    req = c2.recv(1024)
+    logf("recv() duration")
+    logf(tfunc() - start)
+    logf("server_req")
+    logf(repr(req))
+    c2.send(req)
+    c2.shutdown()
 
 
-def run_one_client(ctx, port=PORT):
+def run_one_client(ctx, logf, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     s2 = Socket(s, ctx)
-    print "client recieved", s2.recv(1024)
-    print s.getpeername()
+    s2.send('hello world!')
+    logf('client sent: hello world!\n'
+         'client recieved: ' + s2.recv(1024))
+    s2.shutdown()
 
 
 def thread_network_test(ctx):
-    server = threading.Thread(target=run_one_server, args=(ctx,))
+    log = []
+    logf = lambda e: log.append((tfunc(), e))
+    server = threading.Thread(target=run_one_server, args=(ctx, logf))
     server.daemon = True
     server.start()
     time.sleep(0.25)  # give the server time to start
-    run_one_client(ctx)
+    run_one_client(ctx, logf)
+    log.sort()
+    print "\n".join(["{}".format(e[1]) for e in log])
 
 
 def google_client_test(ctx):
@@ -69,3 +81,10 @@ def encryption():
 
     dur2 = timeit.timeit(lambda: aes_gcm_decrypt(ciphertext, 'a' * 16, 'a' * 12, tag), number=1000)
     print dur2 * 1000, "us per aes gcm decrypt"
+
+
+import sys
+if sys.platform == 'win32':
+    tfunc = time.clock
+else:
+    tfunc = time.time

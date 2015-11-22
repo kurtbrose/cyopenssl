@@ -129,6 +129,7 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_write(SSL *ssl, const void *buf, int num)
     int SSL_read(SSL *ssl, void *buf, int num)
     int SSL_do_handshake(SSL *ssl)
+    int SSL_shutdown(SSL *ssl)
     int SSL_pending(const SSL *ssl)
     int SSL_set_fd(SSL *ssl, int fd)
     int SSL_set_session(SSL *ssl, SSL_SESSION *session)
@@ -464,6 +465,7 @@ cdef enum SSL_OP:
     DO_SSL_WRITE
     DO_SSL_READ
     DO_SSL_HANDSHAKE
+    DO_SSL_SHUTDOWN
 
 
 cdef class Socket:
@@ -502,7 +504,6 @@ cdef class Socket:
         '''
         if self.server_side:
             SSL_set_accept_state(self.ssl)
-            SSL_set_info_callback(self.ssl, &print_ssl_state_callback)
         else:
             SSL_set_connect_state(self.ssl)
             if session is not None:
@@ -546,6 +547,24 @@ cdef class Socket:
             raise SSLError('SSL handshake failed: {0}'.format(result))
         return result
 
+    def shutdown(self, int how=socket.SHUT_RDWR):
+        '''
+        Accepts a how parameter for compatibility with normal sockets,
+        however a half-open SSL socket is not safe (at any time, either
+        side may request a key renegotiation which requires both side
+        to be able to send data; so a SSL Socket recv() may require
+        packets to be sent as well)
+        '''
+        cdef int i = 0
+        try:
+            while not self._do_ssl(DO_SSL_SHUTDOWN, NULL, 0, -1) and i < 10:
+                i += 1
+        except:
+            pass
+        # OpenSSL docs claim that SSL shutdown may need to be called twice.
+        # other practical implementations seem to call it in a loop
+        # TODO: NGINX does some fancy stuff here.... investigate that
+
     def settimeout(self, timeout):
         self.sock.settimeout(timeout)
         #'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
@@ -573,6 +592,8 @@ cdef class Socket:
                     ret = SSL_read(ssl, data, size)
                 elif op == DO_SSL_HANDSHAKE:
                     ret = SSL_do_handshake(ssl)
+                elif op == DO_SSL_SHUTDOWN:
+                    ret = SSL_shutdown(ssl)
             if ret > 0 and (op == DO_SSL_WRITE or op == DO_SSL_READ):
                 return ret
             err = SSL_get_error(self.ssl, ret)
@@ -586,10 +607,18 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
                 # xfer data from socket to BIO
-                io_size = self.sock.recv_into(self.buf, 32 * 1024)
-                if io_size == 0:
+                #io_size = self.sock.recv_into(self.buf, 32 * 1024)
+                recvd = self.sock.recv(32 * 1024)
+                if not recvd:
+                    try:
+                        self.sock.getpeername()
+                        raise Exception("connected socket recv() returned empty string")
+                    except:
+                        pass
                     return 0
-                BIO_write(self.rbio, <char *>self.buf, io_size)
+                #if io_size == 0:
+                #    return 0
+                BIO_write(self.rbio, <char *>recvd, len(recvd))  # self.buf,  io_size)
                 # raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
                 # xfer data from BIO to socket
@@ -668,6 +697,12 @@ cdef class Socket:
         else:
             flags = flags & (~ SSL_MODE_AUTO_RETRY)
         SSL_set_mode(self.ssl, flags)
+
+    def enable_debug_print(self):
+        SSL_set_info_callback(self.ssl, print_ssl_state_callback)
+
+    def disable_debug_print(self):
+        SSL_set_info_callback(self.ssl, NULL)
 
 
 '''
