@@ -238,6 +238,10 @@ from cpython.mem cimport PyMem_Malloc, PyMem_Free
 from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno, PyErr_Clear
 
 
+cdef extern from "../src/monotonic_timer/monotonic_timer.h" nogil:
+    double monotonic_seconds()
+
+
 cdef struct PasswordInfo:
     int nbytes
     char *bytes
@@ -579,6 +583,7 @@ cdef class Socket:
             int ret = 0, err = 0
             int io_size = 0
             SSL *ssl
+            double start, finish
 
         if timeout < 0:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
@@ -586,6 +591,7 @@ cdef class Socket:
             ssl = self.ssl
             # flush_errors()
             with nogil:
+                start = monotonic_seconds()
                 if op == DO_SSL_WRITE:
                     ret = SSL_write(ssl, data, size)
                 elif op == DO_SSL_READ:
@@ -594,6 +600,7 @@ cdef class Socket:
                     ret = SSL_do_handshake(ssl)
                 elif op == DO_SSL_SHUTDOWN:
                     ret = SSL_shutdown(ssl)
+                finish = monotonic_seconds()
             if ret > 0 and (op == DO_SSL_WRITE or op == DO_SSL_READ):
                 return ret
             err = SSL_get_error(self.ssl, ret)
@@ -697,6 +704,13 @@ cdef class Socket:
         SSL_set_info_callback(self.ssl, NULL)
 
 
+def timer_overhead():
+    cdef double s, f
+    s = monotonic_seconds()
+    r = s ** 2
+    f = monotonic_seconds()
+    return f - s
+
 '''
 cdef void flush_errors():
     #TODO: better way to clear out previous errors
@@ -777,6 +791,14 @@ cdef class MemBIO:
         if self.bio:
             BIO_free(self.bio)
 
+'''
+def pkcs7_sign(Certificate signcert not None, PrivateKey pkey not None, bytes plaintext):
+    BIO *bio
+    bio = BIO_new_mem_buf(plaintext, len(plaintext))
+    PKCS7_sign(signcert.cert, pkey.private_key, bio)
+
+    BIO_free(bio)
+'''
 
 def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
     cdef:
