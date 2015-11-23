@@ -40,9 +40,9 @@ cdef extern from "openssl/evp.h" nogil:
 
     void EVP_PKEY_free(EVP_PKEY *key)
 
-    #const EVP_CIPHER* EVP_aes_128_gcm()
-    #const EVP_CIPHER* EVP_aes_192_gcm()
-    #const EVP_CIPHER* EVP_aes_256_gcm()
+    const EVP_CIPHER* EVP_aes_128_gcm()
+    const EVP_CIPHER* EVP_aes_192_gcm()
+    const EVP_CIPHER* EVP_aes_256_gcm()
 
     EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **a, const unsigned char **pp, long length)
 
@@ -785,7 +785,7 @@ cdef class MemBIO:
         if self.bio:
             BIO_free(self.bio)
 
-'''
+
 def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, int tagsize=16):
     cdef:
         EVP_CIPHER_CTX *ctx = NULL
@@ -853,7 +853,7 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen) except? NULL:
     elif keylen == 256 / 8:
         return EVP_aes_256_gcm()
     raise ValueError("keylen must be 128, 192, or 256 bits")
-'''
+
 
 cdef _library_init():
     SSL_load_error_strings()
