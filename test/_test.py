@@ -15,6 +15,7 @@ def run_one_server(ctx, logf, port=PORT):
     if type(ctx) is int:
         ctx = init_contexts()[ctx]
     s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind( ('127.100.100.1', port) )
     s.listen(300)
     c, a = s.accept()
@@ -27,6 +28,7 @@ def run_one_server(ctx, logf, port=PORT):
     logf(repr(req))
     c2.send(req)
     c2.shutdown()
+    s.shutdown()
 
 
 def run_one_client(ctx, logf, port=PORT):
