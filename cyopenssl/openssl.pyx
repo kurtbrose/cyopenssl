@@ -607,18 +607,10 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
                 # xfer data from socket to BIO
-                #io_size = self.sock.recv_into(self.buf, 32 * 1024)
-                recvd = self.sock.recv(32 * 1024)
-                if not recvd:
-                    try:
-                        self.sock.getpeername()
-                        raise Exception("connected socket recv() returned empty string")
-                    except:
-                        pass
+                io_size = self.sock.recv_into(self.buf)
+                if io_size == 0:
                     return 0
-                #if io_size == 0:
-                #    return 0
-                BIO_write(self.rbio, <char *>recvd, len(recvd))  # self.buf,  io_size)
+                BIO_write(self.rbio, <char *>self.buf,  io_size)
                 # raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
                 # xfer data from BIO to socket
@@ -744,7 +736,6 @@ cdef void print_ssl_state_callback(SSL *ssl, int where, int ret) nogil:
         printf("%s:%s\n", s, SSL_state_string_long(ssl))
     elif where & SSL_CB_ALERT:
         if where & SSL_CB_READ:
-            s = "read"
             bio = SSL_get_rbio(ssl)
         else:
             s = "write"
@@ -761,6 +752,7 @@ cdef void print_ssl_state_callback(SSL *ssl, int where, int ret) nogil:
             printf("%s:failed in %s\n", s, SSL_state_string_long(ssl))
         elif ret < 0:
             printf("%s:error in %s\n", s, SSL_state_string_long(ssl))
+            s = "read"
 
 
 class SSLError(socket.error):
