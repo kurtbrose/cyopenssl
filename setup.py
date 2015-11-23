@@ -38,7 +38,7 @@ else:
     libraries = ['ssl', 'crypto']
 
 
-extension = Extension('openssl', sources=['openssl.pyx'],
+extension = Extension('openssl', sources=['cyopenssl/openssl.pyx'],
     libraries=libraries, extra_compile_args=extra_compile_args,
     extra_objects=extra_objects, include_dirs=include_dirs,
     library_dirs=library_dirs)

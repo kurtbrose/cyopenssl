@@ -5,7 +5,7 @@ import os.path
 import time
 import pprint
 
-from openssl import *
+from cyopenssl import *
 
 RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 PORT = 9898
