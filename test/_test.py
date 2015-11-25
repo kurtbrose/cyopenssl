@@ -20,24 +20,28 @@ def run_one_server(ctx, logf, port=PORT):
     s.listen(300)
     c, a = s.accept()
     c2 = Socket(c, ctx, server_side=True)
-    start = tfunc()
     req = c2.recv(1024)
-    logf("recv() duration")
-    logf(tfunc() - start)
-    logf("server_req")
-    logf(repr(req))
-    c2.send(req)
-    c2.shutdown()
-    s.shutdown()
+    bytes_recvd = 0
+    while req:
+        bytes_recvd += len(req)
+        c2.send(req)
+        req = c2.recv(1024)
+
+    c2.shutdown(socket.SHUT_RDWR)
+    s.close()
 
 
 def run_one_client(ctx, logf, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     s2 = Socket(s, ctx)
-    s2.send('hello world!')
+    start = tfunc()
+    for i in range(100):
+        s2.send('hello world!')
+        s2.recv(1024)
+    logf("client echo latency " + str((tfunc() - start) * 1e6 / 100) + "us")
     logf('client sent: hello world!\n'
          'client recieved: ' + s2.recv(1024))
-    s2.shutdown()
+    s2.shutdown(socket.SHUT_RDWR)
 
 
 def thread_network_test(ctx):
