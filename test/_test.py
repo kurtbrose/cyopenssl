@@ -19,6 +19,7 @@ def run_one_server(ctx, logf, port=PORT):
     s.bind( ('127.100.100.1', port) )
     s.listen(300)
     c, a = s.accept()
+    c.settimeout(0.1)  # localhost should be very fast
     c2 = Socket(c, ctx, server_side=True)
     req = c2.recv(1024)
     bytes_recvd = 0
@@ -33,6 +34,7 @@ def run_one_server(ctx, logf, port=PORT):
 
 def run_one_client(ctx, logf, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
+    s.settimeout(0.1)  # localhost should be very fast
     s2 = Socket(s, ctx)
     start = tfunc()
     for i in range(100):
