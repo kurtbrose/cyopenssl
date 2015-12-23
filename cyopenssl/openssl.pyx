@@ -43,6 +43,7 @@ cdef extern from "openssl/evp.h" nogil:
     const EVP_CIPHER* EVP_aes_128_gcm()
     const EVP_CIPHER* EVP_aes_192_gcm()
     const EVP_CIPHER* EVP_aes_256_gcm()
+    const EVP_CIPHER* EVP_des_ede3_cbc()
 
     EVP_PKEY *d2i_AutoPrivateKey(EVP_PKEY **a, const unsigned char **pp, long length)
 
@@ -50,6 +51,27 @@ cdef extern from "openssl/evp.h" nogil:
     int EVP_CTRL_GCM_SET_IVLEN
     int EVP_CTRL_GCM_GET_TAG
     int EVP_CTRL_GCM_SET_TAG
+
+
+cdef extern from "openssl/pkcs7.h" nogil:
+    ctypedef struct PKCS7:
+        pass
+
+    PKCS7 *PKCS7_sign(
+        X509 *signcert, EVP_PKEY *pkey, stack_st_X509 *certs, BIO *data, int flags)
+
+    int PKCS7_verify(
+        PKCS7 *p7, stack_st_X509 *certs, X509_STORE *store, BIO *indata, BIO *out, int flags)
+
+    PKCS7 *PKCS7_encrypt(
+        stack_st_X509 *certs, BIO *in_, const EVP_CIPHER *cipher, int flags)
+
+    int PKCS7_decrypt(
+        PKCS7 *p7, EVP_PKEY *pkey, X509 *cert, BIO *data, int flags)
+
+    void PKCS7_free(PKCS7 *p7)
+
+    int PKCS7_BINARY
 
 
 cdef extern from "openssl/x509.h" nogil:
@@ -71,6 +93,13 @@ cdef extern from "openssl/x509.h" nogil:
     struct stack_st_X509_NAME:
         pass
 
+    struct stack_st_X509:
+        pass
+
+    stack_st_X509 *sk_X509_new_null()
+    void sk_X509_free(stack_st_X509*)
+    void sk_X509_push(stack_st_X509*, X509*)
+
 
 cdef extern from "openssl/x509_vfy.h" nogil:
     ctypedef struct X509_STORE_CTX:
@@ -81,6 +110,10 @@ cdef extern from "openssl/pem.h" nogil:
     ctypedef int pem_password_cb(char *buf, int size, int rwflag, void *userdata)
     EVP_PKEY *PEM_read_bio_PrivateKey(
         BIO *bp, EVP_PKEY **x, pem_password_cb *cb, void *u)
+
+    PKCS7 *PEM_read_bio_PKCS7(BIO *bp, PKCS7 **x, pem_password_cb *cb, void *u)
+
+    int PEM_write_bio_PKCS7(BIO *bp, PKCS7 *x)
 
 
 cdef extern from "openssl/bio.h" nogil:
@@ -130,6 +163,7 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_read(SSL *ssl, void *buf, int num)
     int SSL_do_handshake(SSL *ssl)
     int SSL_shutdown(SSL *ssl)
+    int SSL_get_shutdown(const SSL *ssl)
     int SSL_pending(const SSL *ssl)
     int SSL_set_fd(SSL *ssl, int fd)
     int SSL_set_session(SSL *ssl, SSL_SESSION *session)
@@ -222,6 +256,9 @@ cdef extern from "openssl/ssl.h" nogil:
 
     # SSL states
     int SSL_ST_MASK, SSL_ST_CONNECT, SSL_ST_ACCEPT
+
+    # SSL shutdown states
+    int SSL_SENT_SHUTDOWN, SSL_RECEIVED_SHUTDOWN
 
 
 
@@ -397,7 +434,7 @@ cdef class PrivateKey:
         else:
             data_bio = BIO_new_mem_buf(data_ptr, len(data))
             self.private_key = PEM_read_bio_PrivateKey(
-                data_bio, NULL, NULL, <unsigned char*>passphrase)
+                data_bio, NULL, NULL, <const unsigned char*>passphrase)
             BIO_free(data_bio)
         if self.private_key == NULL:
             raise _ssleay_err2value_err() or ValueError("PrivateKey init error")
@@ -411,13 +448,19 @@ cdef class Certificate:
     cdef:
         X509 *cert
 
-    def __init__(self):
+    def __init__(self, bytes data not None):
+        cdef const unsigned char* data_ptr = data
         self.cert = NULL
-        self.cert = X509_new()
+        self.cert = d2i_X509(NULL, &data_ptr, len(data))
+        if not self.cert:
+            code = ERR_get_error()
+            if code:
+                raise ValueError(ERR_error_string(code, NULL))
 
     def __dealloc__(self):
         if self.cert:
             X509_free(self.cert)
+
 
 cdef class CertStore:
     cdef:
@@ -435,11 +478,29 @@ cdef class CertStore:
             X509_STORE_free(self.cert_store)
 
 
+cdef class CertStack:
+    'append-only for now'
+    cdef:
+        stack_st_X509 *cert_stack
+
+    def __init__(self, certs):
+        self.cert_stack = sk_X509_new_null()
+        for cert in certs:
+            self.append(cert)
+
+    def append(self, Certificate cert not None):
+        sk_X509_push(self.cert_stack, cert.cert)
+
+    def __dealloc__(self):
+        if self.cert_stack:
+            sk_X509_free(self.cert_stack)
+
+
 cdef object _ssleay_err2value_err():
     cdef int code
     code = ERR_get_error()
     if code:
-        return ValueError(<bytes>ERR_error_string(code, None))
+        return ValueError(<bytes>ERR_error_string(code, NULL))
 
 
 cdef bytes _pop_and_format_error_list():
@@ -475,7 +536,8 @@ cdef class Socket:
         object sock
         int fileno
         double timeout
-        BIO *rbio, *wbio
+        BIO *rbio
+        BIO *wbio
         bytearray buf
 
     def __cinit__(self, sock, Context context not None, bool server_side=False,
@@ -576,7 +638,7 @@ cdef class Socket:
 
     cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
         cdef:
-            int ret = 0, err = 0
+            int ret = 0, err = 0, shutdown = 0
             int io_size = 0
             SSL *ssl
 
@@ -584,6 +646,14 @@ cdef class Socket:
             timeout = self.timeout  # TODO: timeouts that do anything... heh...
         while 1:  # TODO: apply "logical" timeout on top of SSL_WANT_READ / SSL_WANT_WRITE
             ssl = self.ssl
+            shutdown = SSL_get_shutdown(ssl)
+            if shutdown and op != DO_SSL_SHUTDOWN:
+                if shutdown & SSL_RECEIVED_SHUTDOWN:
+                    raise SSLError("recieved shutdown")
+                elif shutdown & SSL_SENT_SHUTDOWN:
+                    raise SSLError("sent shutdown")
+                else:
+                    raise SSLError("unknown shutdown state " + str(shutdown))
             # flush_errors()
             with nogil:
                 if op == DO_SSL_WRITE:
@@ -718,7 +788,7 @@ def ssl_mode2dict(int flags):
     return flag_dict
 
 
-cdef void print_ssl_state_callback(SSL *ssl, int where, int ret) nogil:
+cdef void print_ssl_state_callback(const SSL *ssl, int where, int ret) nogil:
     cdef:
         int w, flags
         const char *s
@@ -845,6 +915,125 @@ cdef const EVP_CIPHER* get_aes_gcm_cipher(int keylen) except? NULL:
     elif keylen == 256 / 8:
         return EVP_aes_256_gcm()
     raise ValueError("keylen must be 128, 192, or 256 bits")
+
+
+def pkcs7_sign(Certificate signcert not None, PrivateKey key not None, bytes data not None, CertStack certs=None):
+    cdef:
+        PKCS7* p7 = NULL
+        stack_st_X509* cert_stack = NULL
+        const unsigned char *data_ptr = data
+        EVP_PKEY *pkey
+        X509* _signcert
+    if certs:
+        cert_stack = certs.cert_stack
+    pkey = key.private_key
+    _signcert = signcert.cert
+    data_bio = BIO_new_mem_buf(data_ptr, len(data))
+    with nogil:
+        p7 = PKCS7_sign(_signcert, pkey, cert_stack, data_bio, PKCS7_BINARY)
+        BIO_free(data_bio)
+    if not p7:
+        raise ValueError(_pop_and_format_error_list())
+    return wrap_p7(p7)
+
+
+def pkcs7_verify(
+    PKCS7_digest p7 not None, CertStore trustedcerts not None, CertStack signcerts=None):
+    'verify a PKCS7 digest; returns either True or False'
+    cdef:
+        stack_st_X509 *_signcerts = NULL
+    if signcerts:
+        _signcerts = signcerts.cert_stack
+    if 1 == PKCS7_verify(p7.p7, _signcerts, trustedcerts.cert_store, NULL, NULL, 0):
+        return True
+    return False  # TODO: better error checking / exceptions?
+
+
+def pkcs7_encrypt(CertStack keychain not None, bytes data not None):
+    'PKCS7 encrypt data with the passed certificates'
+    cdef:
+        PKCS7* p7 = NULL
+        BIO *bio = NULL
+        const unsigned char *data_ptr = data
+    try:
+        bio = BIO_new_mem_buf(data_ptr, len(data))
+        p7 = PKCS7_encrypt(keychain.cert_stack, bio, EVP_des_ede3_cbc(), PKCS7_BINARY)
+        if not p7:
+            raise ValueError(_pop_and_format_error_list())
+        return wrap_p7(p7)
+    finally:
+        if bio:
+            BIO_free(bio)
+
+
+def pkcs7_decrypt(PKCS7_digest p7 not None, PrivateKey priv not None, Certificate pub not None):
+    'decrypts the passed PKCS7 structure and returns the plaintext payload'
+    cdef:
+        BIO *bio = NULL
+    bio = BIO_new(BIO_s_mem())
+    try:
+        if 1 == PKCS7_decrypt(p7.p7, priv.private_key, pub.cert, bio, PKCS7_BINARY):
+            size = BIO_pending(bio)
+            out = bytearray(size)
+            BIO_read(bio, <char*>out, size)
+            return out
+        raise ValueError(_pop_and_format_error_list())
+    finally:
+        if bio:
+            BIO_free(bio)
+
+
+cdef wrap_p7(PKCS7 *p7):
+    'wrap a bare PKCS7* into a Python extension type'
+    digest = PKCS7_digest()
+    digest.p7 = p7
+    return digest
+
+
+# TODO: should the "real" OpenSSL PKCS7 struct correspond 1:1 with these digests?
+cdef class PKCS7_digest:
+    '''
+    represents a PKCS7 digest, which may be serialized to various forms
+    should not be instantiated directly
+    '''
+    cdef PKCS7 *p7
+
+    # TODO: how can I ensure these are only made through wrap_p7
+    # in order to guarantee self.p7 is not NULL?
+
+    def pem_digest(self):
+        cdef:
+            BIO *bio = NULL
+            int size = 0
+        try:
+            bio = BIO_new(BIO_s_mem())
+            PEM_write_bio_PKCS7(bio, self.p7)
+            size = BIO_pending(bio)
+            out = bytearray(size)
+            BIO_read(bio, <char*>out, size)
+            return out
+        finally:
+            if bio:
+                BIO_free(bio)
+
+    @classmethod
+    def parse_pem(cls, bytes data not None):
+        cdef:
+            BIO *bio = NULL
+            PKCS7 *p7 = NULL
+        try:
+            bio = BIO_new_mem_buf(<char *>data, len(data))
+            p7 = PEM_read_bio_PKCS7(bio, NULL, NULL, NULL)
+            if not p7:
+                raise ValueError(_pop_and_format_error_list())
+            return wrap_p7(p7)
+        finally:
+            if bio:
+                BIO_free(bio)
+
+    def __dealloc__(self):
+        if self.p7:
+            PKCS7_free(self.p7)
 
 
 cdef _library_init():

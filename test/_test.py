@@ -1,8 +1,10 @@
 import socket
 import select
+import base64
 import threading
 import os.path
 import time
+import timeit
 import pprint
 
 from cyopenssl import *
@@ -21,14 +23,19 @@ def run_one_server(ctx, logf, port=PORT):
     c, a = s.accept()
     c.settimeout(0.1)  # localhost should be very fast
     c2 = Socket(c, ctx, server_side=True)
+    c2.enable_debug_print()
     req = c2.recv(1024)
     bytes_recvd = 0
     while req:
         bytes_recvd += len(req)
         c2.send(req)
-        req = c2.recv(1024)
+        try:
+            req = c2.recv(1024)
+        except socket.error:
+            break
 
     c2.shutdown(socket.SHUT_RDWR)
+    s.shutdown(socket.SHUT_RDWR)
     s.close()
 
 
@@ -36,6 +43,7 @@ def run_one_client(ctx, logf, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     s.settimeout(0.1)  # localhost should be very fast
     s2 = Socket(s, ctx)
+    s2.enable_debug_print()
     start = tfunc()
     for i in range(100):
         s2.send('hello world!')
@@ -90,6 +98,43 @@ def encryption():
     dur2 = timeit.timeit(lambda: aes_gcm_decrypt(ciphertext, 'a' * 16, 'a' * 12, tag), number=1000)
     print dur2 * 1000, "us per aes gcm decrypt"
 
+
+def pkcs7():
+    def pem2asn(data):
+        # hackety hack hack way of converting PEM 2 ASN1 binary string
+        # ... good enough for this test but nothing else
+        return base64.b64decode(
+            'MII' + data.partition('MII')[2].partition('-----')[0].replace('\n', ''))
+
+    print "PKCS7 performance..."
+    for s in ['1k', '2k', '4k']:
+        pub = open('{0}/cert{1}.pem'.format(RESOURCES, s)).read()
+        cert = Certificate(pem2asn(pub))
+        certstore = CertStore()
+        certstore.add_cert(cert)
+        certstack = CertStack([cert])
+        key = open('{0}/key{1}.pem'.format(RESOURCES, s)).read()
+        pkey = PrivateKey(key, 'test')
+        for inp in ('a', 'a' * 256, 'a' * 1024, 'a' * 1024 * 1024):
+            signed = pkcs7_sign(cert, pkey, inp)
+            encrypted = pkcs7_encrypt(certstack, inp)
+            assert pkcs7_verify(signed, certstore), "verify failed"
+            assert pkcs7_decrypt(encrypted, pkey, cert) == inp, "decrypt failed"
+            PKCS7_digest.parse_pem(str(signed.pem_digest()))
+            PKCS7_digest.parse_pem(str(encrypted.pem_digest()))
+            print "key:", s, "input {0:8d}".format(len(inp))
+            dur = timeit.timeit(
+                lambda: pkcs7_sign(cert, pkey, inp).pem_digest(), number=10)
+            print "SIGN {0:6.02f}ms".format(dur * 100),
+            dur = timeit.timeit(
+                lambda: pkcs7_verify(signed, certstore), number=10)
+            print "VERIFY {0:6.02f}ms".format(dur * 100),
+            dur = timeit.timeit(
+                lambda: pkcs7_encrypt(certstack, inp), number=10)
+            print "ENCRYPT {0:6.02f}ms".format(dur * 100),
+            dur = timeit.timeit(
+                lambda: pkcs7_decrypt(encrypted, pkey, cert), number=10)
+            print "DECRYPT {0:6.02f}ms".format(dur * 100)
 
 import sys
 if sys.platform == 'win32':
