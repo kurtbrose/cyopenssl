@@ -6,6 +6,7 @@ import os.path
 import time
 import timeit
 import pprint
+import traceback
 
 from cyopenssl import *
 
@@ -13,17 +14,20 @@ RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 PORT = 9898
 
 
-def run_one_server(ctx, logf, port=PORT):
+def run_one_server(ctx, logf, port=PORT, event=None):
     if type(ctx) is int:
         ctx = init_contexts()[ctx]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind( ('127.100.100.1', port) )
     s.listen(300)
+    if event:
+        event.set()
     c, a = s.accept()
     c.settimeout(0.1)  # localhost should be very fast
     c2 = Socket(c, ctx, server_side=True)
     c2.enable_debug_print()
+    logf("SERVER: START LOOP")
     req = c2.recv(1024)
     bytes_recvd = 0
     while req:
@@ -31,8 +35,13 @@ def run_one_server(ctx, logf, port=PORT):
         c2.send(req)
         try:
             req = c2.recv(1024)
+            if not req:
+                logf("SERVER: GOT EMPTY RECV() DATA")
         except socket.error:
+            logf("SERVER: SOCKET ERROR " + traceback.format_exc())
             break
+
+    logf("SERVER: LOOP COMPLETE")
 
     c2.shutdown(socket.SHUT_RDWR)
     s.shutdown(socket.SHUT_RDWR)
@@ -57,13 +66,18 @@ def run_one_client(ctx, logf, port=PORT):
 def thread_network_test(ctx):
     log = []
     logf = lambda e: log.append((tfunc(), e))
-    server = threading.Thread(target=run_one_server, args=(ctx, logf))
+    ready = threading.Event()
+    server = threading.Thread(
+        target=run_one_server, args=(ctx, logf), kwargs={'event': ready})
     server.daemon = True
     server.start()
-    time.sleep(0.25)  # give the server time to start
-    run_one_client(ctx, logf)
-    log.sort()
-    print "\n".join(["{}".format(e[1]) for e in log])
+    if not ready.wait(0.5):
+        raise Exception("server not ready after 500ms")
+    try:
+        run_one_client(ctx, logf)
+    finally:
+        log.sort()
+        print "\n".join(["{}".format(e[1]) for e in log])
 
 
 def google_client_test(ctx):
