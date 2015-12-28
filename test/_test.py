@@ -38,14 +38,15 @@ def run_one_server(ctx, logf, port=PORT, event=None):
             if not req:
                 logf("SERVER: GOT EMPTY RECV() DATA")
         except socket.error:
-            logf("SERVER: SOCKET ERROR " + traceback.format_exc())
+            logf(
+                "SERVER: SOCKET ERROR AFTER {0} bytes\n".format(bytes_recvd)
+                + traceback.format_exc())
             break
 
-    logf("SERVER: LOOP COMPLETE")
-
     c2.shutdown(socket.SHUT_RDWR)
-    s.shutdown(socket.SHUT_RDWR)
     s.close()
+
+    logf("SERVER: LOOP COMPLETE")
 
 
 def run_one_client(ctx, logf, port=PORT):
@@ -56,10 +57,10 @@ def run_one_client(ctx, logf, port=PORT):
     start = tfunc()
     for i in range(100):
         s2.send('hello world!')
-        s2.recv(1024)
+        resp = s2.recv(1024)
     logf("client echo latency " + str((tfunc() - start) * 1e6 / 100) + "us")
     logf('client sent: hello world!\n'
-         'client recieved: ' + s2.recv(1024))
+         'client recieved: ' + resp)
     s2.shutdown(socket.SHUT_RDWR)
 
 
@@ -76,6 +77,7 @@ def thread_network_test(ctx):
     try:
         run_one_client(ctx, logf)
     finally:
+        server.join()
         log.sort()
         print "\n".join(["{}".format(e[1]) for e in log])
 
@@ -83,6 +85,9 @@ def thread_network_test(ctx):
 def google_client_test(ctx):
     s = socket.create_connection(('google.com', 443))
     s2 = Socket(s, ctx)
+    s2.send('GET / HTTP/0.9\r\n\r\n')
+    resp = s2.recv(32 * 1024)  # just check that we can establish SSL tunnel
+    assert resp, "google handshake failed"
 
 
 def init_contexts():
