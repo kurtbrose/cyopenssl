@@ -26,7 +26,7 @@ def run_one_server(ctx, logf, port=PORT, event=None):
     c, a = s.accept()
     c.settimeout(0.1)  # localhost should be very fast
     c2 = Socket(c, ctx, server_side=True)
-    c2.enable_debug_print()
+    #c2.enable_debug_print()
     logf("SERVER: START LOOP")
     req = c2.recv(1024)
     bytes_recvd = 0
@@ -53,12 +53,15 @@ def run_one_client(ctx, logf, port=PORT):
     s = socket.create_connection( ('127.100.100.1', port) )
     s.settimeout(0.1)  # localhost should be very fast
     s2 = Socket(s, ctx)
-    s2.enable_debug_print()
-    start = tfunc()
+    #s2.enable_debug_print()
+    ts = []
     for i in range(100):
+        start = tfunc()
         s2.send('hello world!')
         resp = s2.recv(1024)
-    logf("client echo latency " + str((tfunc() - start) * 1e6 / 100) + "us")
+        ts.append(tfunc() - start)
+    logf("client mean latency " + str(sum(ts) * 1e6 / len(ts)) + "us")
+    logf("client median latency " + str(sorted(ts)[len(ts) / 2] * 1e6) + "us")
     logf('client sent: hello world!\n'
          'client recieved: ' + resp)
     s2.shutdown(socket.SHUT_RDWR)
