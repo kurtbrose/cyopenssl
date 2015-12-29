@@ -343,7 +343,7 @@ cdef class Context:
             ca_list_p = SSL_load_client_CA_file(certfile_or_certs)
             if ca_list_p == NULL:
                 raise ValueError("error loading certificate file " + 
-                    repr(certfile_or_certs) + "\n" + _pop_and_format_error_list)
+                    repr(certfile_or_certs) + "\n" + _pop_and_format_error_list())
             SSL_CTX_set_client_CA_list(self.ctx, ca_list_p)
         else:
             for cert in certfile_or_certs:
@@ -710,7 +710,7 @@ cdef class Socket:
             int rflags, wflags
 
         if ERR_peek_error():
-            raise SSLError(_pop_and_format_error_list)
+            raise SSLError(_pop_and_format_error_list())
 
         rflags = BIO_test_flags(SSL_get_rbio(self.ssl), 0xFF)
         wflags = BIO_test_flags(SSL_get_wbio(self.ssl), 0xFF)
