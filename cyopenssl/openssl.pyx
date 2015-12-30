@@ -281,6 +281,9 @@ cdef struct PasswordInfo:
 
 
 cdef class Context:
+    '''
+    Wrapper around an OpenSSL SSL_CTX structure.
+    '''
     cdef:
         SSL_CTX *ctx
         bytes password
@@ -352,16 +355,30 @@ cdef class Context:
                         repr(cert) + "\n" + _pop_and_format_error_list())
 
     def use_certificate(self, Certificate cert not None):
+        '''
+        Note: this operation destroys the Certificate; ownership of the underlying
+        structure passes to the Context
+        '''
         if not SSL_CTX_use_certificate(self.ctx, cert.cert):
             raise _ssleay_err2value_err() or ValueError("SSL_CTX_use_certificate() error")
+        cert.cert = NULL
 
     def set_cert_store(self, CertStore cert_store not None):
+        '''
+        Note: this operation destroys the CertStore; ownership of the underlying
+        structure passes to the Context
+        '''
         SSL_CTX_set_cert_store(self.ctx, cert_store.cert_store)
         cert_store.cert_store = NULL
 
     def add_extra_chain_cert(self, Certificate cert not None):
+        '''
+        Note: this operation destroys the Certificate; ownership of the underlying
+        structure passes to the Context
+        '''
         if not SSL_CTX_add_extra_chain_cert(self.ctx, cert.cert):
             raise _ssleay_err2value_err() or ValueError("SSL_CTX_add_extra_chain_cert() failed")
+        cert.cert = NULL
 
     def use_privatekey(self, PrivateKey private_key not None):
         if not SSL_CTX_use_PrivateKey(self.ctx, private_key.private_key):
@@ -446,9 +463,9 @@ cdef class PrivateKey:
 
 cdef class Certificate:
     cdef:
-        X509 *cert
+        X509 *cert 
 
-    def __init__(self, bytes data not None):
+    def __cinit__(self, bytes data not None):
         cdef const unsigned char* data_ptr = data
         self.cert = NULL
         self.cert = d2i_X509(NULL, &data_ptr, len(data))
@@ -466,7 +483,7 @@ cdef class CertStore:
     cdef:
         X509_STORE *cert_store
 
-    def __init__(self):
+    def __cinit__(self):
         self.cert_store = X509_STORE_new()
 
     def add_cert(self, Certificate cert not None):
@@ -483,7 +500,7 @@ cdef class CertStack:
     cdef:
         stack_st_X509 *cert_stack
 
-    def __init__(self, certs):
+    def __cinit__(self, certs):
         self.cert_stack = sk_X509_new_null()
         for cert in certs:
             self.append(cert)
