@@ -520,6 +520,7 @@ cdef bytes _pop_and_format_error_list():
 
 
 import socket
+import time
 
 
 cdef enum SSL_OP:
@@ -586,24 +587,31 @@ cdef class Socket:
             else:
                 self.do_handshake()
 
-    def send(self, bytes data not None, int flags=0, double timeout=-1):
+    def send(self, bytes data not None, int flags=0):
         if flags:
             raise ValueError("flags not supported for SSL socket")
-        return self._do_ssl(DO_SSL_WRITE, data, len(data), timeout)
+        return self._do_ssl(DO_SSL_WRITE, data, len(data))
 
-    def recv(self, int size, int flags=0, double timeout=-1):
+    def recv(self, int size, int flags=0):
         cdef char *buf
         cdef int read
         if flags:
             raise ValueError("flags not supported for SSL socket")
         buf = <char *>PyMem_Malloc(size)
-        read = self._do_ssl(DO_SSL_READ, buf, size, timeout)
+        read = self._do_ssl(DO_SSL_READ, buf, size)
         response = <bytes>buf[:read]
         PyMem_Free(buf)
         return response
 
+    def recv_into(self, bytearray dst not None, int size=0, int flags=0):
+        if size == 0:
+            size = len(dst)
+        if flags:
+            raise ValueError("flags not supported for SSL socket")
+        return self._do_ssl(DO_SSL_READ, <char*>dst, size)
+
     def do_handshake(self, double timeout=-1):
-        cdef int result = self._do_ssl(DO_SSL_HANDSHAKE, NULL, 0, timeout)
+        cdef int result = self._do_ssl(DO_SSL_HANDSHAKE, NULL, 0)
         if result <= 0:
             # sometimes when handshake fails, SSL_get_error still returns 0
             raise SSLError('SSL handshake failed: {0}'.format(result))
@@ -619,7 +627,7 @@ cdef class Socket:
         '''
         cdef int i = 0
         try:
-            while not self._do_ssl(DO_SSL_SHUTDOWN, NULL, 0, -1) and i < 10:
+            while not self._do_ssl(DO_SSL_SHUTDOWN, NULL, 0) and i < 10:
                 i += 1
         except:
             pass
@@ -628,24 +636,21 @@ cdef class Socket:
         # TODO: NGINX does some fancy stuff here.... investigate that
 
     def settimeout(self, timeout):
-        self.sock.settimeout(timeout)
-        #'timeout value in seconds (e.g. 0.1 = 100ms); timeout value < 0 means non-blocking'
-        #cdef long nonblocking
         self.timeout = timeout
-        #nonblocking = self.timeout <= 0.0  # 0 for blocking IO, 1 for nonblocking IO
-        #BIO_set_nbio(SSL_get_rbio(self.ssl), 1)  # nonblocking)
-        #BIO_set_nbio(SSL_get_wbio(self.ssl), 1)  # nonblocking)
+        self.sock.settimeout(timeout)
 
-    cdef int _do_ssl(self, SSL_OP op, char* data, int size, double timeout) except *:
+    cdef int _do_ssl(self, SSL_OP op, char* data, int size) except *:
         cdef:
             int ret = 0, err = 0, shutdown = 0
             int io_size = 0
+            double timeout = self.timeout
+            double start = 0
             SSL *ssl
 
-        if timeout < 0:
-            timeout = self.timeout  # TODO: timeouts that do anything... heh...
-        while 1:  # TODO: apply "logical" timeout on top of SSL_WANT_READ / SSL_WANT_WRITE
-            ssl = self.ssl
+        start = time.time()
+        ssl = self.ssl
+
+        while 1:
             shutdown = SSL_get_shutdown(ssl)
             if shutdown and op != DO_SSL_SHUTDOWN:
                 if shutdown & SSL_RECEIVED_SHUTDOWN:
@@ -670,6 +675,7 @@ cdef class Socket:
             io_size = BIO_pending(self.wbio)
             if io_size:
                 io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
+                self._update_timeout(start)
                 self.sock.sendall(self.buf[:io_size])
             if err == SSL_ERROR_NONE:
                 return ret
@@ -677,6 +683,7 @@ cdef class Socket:
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
                 # xfer data from socket to BIO
+                self._update_timeout(start)
                 io_size = self.sock.recv_into(self.buf)
                 if io_size == 0:
                     return 0
@@ -685,6 +692,7 @@ cdef class Socket:
             elif err == SSL_ERROR_WANT_WRITE:
                 # xfer data from BIO to socket
                 io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
+                self._update_timeout(start)
                 self.sock.sendall(self.buf[:io_size])
                 # raise SSLWantWrite()
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
@@ -704,6 +712,15 @@ cdef class Socket:
     def __dealloc__(self):
         if self.ssl:
             SSL_free(self.ssl)
+
+    cdef int _update_timeout(self, double since) except -1:
+        cdef double left
+        if self.timeout:
+            left = self.timeout - (time.time() - since)
+            if left <= 0:
+                raise socket.timeout('timed out')
+            self.sock.settimeout(left)
+        return 0
 
     cdef int _handle_syscall_error(self, int ret, int err) except *:
         cdef:
