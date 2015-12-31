@@ -182,6 +182,7 @@ cdef extern from "openssl/ssl.h" nogil:
     const char *SSL_state_string_long(const SSL *ssl)
     long SSL_set_mode(SSL *ssl, long mode)
     long SSL_get_mode(SSL *ssl)
+    long SSL_session_reused(SSL *ssl)
 
     void SSL_set_info_callback(SSL *ssl, void (*callback)(SSL*, int, int))
 
@@ -806,6 +807,10 @@ cdef class Socket:
 
     def disable_debug_print(self):
         SSL_set_info_callback(self.ssl, NULL)
+
+    def session_reused(self):
+        'returns True if the last handshake reused a cached session'
+        return SSL_session_reused(self.ssl) != 0
 
 
 '''
