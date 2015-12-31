@@ -612,10 +612,20 @@ cdef class Socket:
             else:
                 self.do_handshake()
 
-    def send(self, bytes data not None, int flags=0):
+    def send(self, object data not None, int flags=0):
+        cdef char *_data
+        dt = type(data)
+        if dt is bytes:
+            _data = <char*>(<bytes>data)
+        elif dt is bytearray:
+            _data = <char*>(<bytearray>data)
+        else:
+            raise TypeError("parameter data must be bytes or bytearray, not " + repr(dt)) 
         if flags:
             raise ValueError("flags not supported for SSL socket")
         return self._do_ssl(DO_SSL_WRITE, data, len(data))
+
+    sendall = send
 
     def recv(self, int size, int flags=0):
         cdef char *buf
