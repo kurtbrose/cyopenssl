@@ -46,5 +46,16 @@ extension = Extension('openssl', sources=['cyopenssl/openssl.pyx'],
 
 setup(
     name='cyopenssl',
+    version='0.1',
+    author="Kurt Rose",
+    author_email="kurt@kurtrose.com",
+    description="cython based wrapper of openssl",
+    license="MIT",
+    url="http://github.com/doublereedkurt/cyopenssl",
+    classifiers=[
+        'Development Status :: 3 - Alpha',
+        'License :: OSI Approved :: MIT License'],
+    packages=['cyopenssl'],
+    install_requires=['Cython'],
     ext_modules=cythonize(extension)
     )
