@@ -85,6 +85,33 @@ def thread_network_test(ctx):
         print "\n".join(["{}".format(e[1]) for e in log])
 
 
+def session_test(ctx):
+    class BufSock(object):
+        def __init__(self):
+            self.inbuf = []
+
+        def setpeer(self, o):
+            self.peer = peer
+
+        def sendall(self, data):
+            self.peer.inbuf.append(data)
+
+        def recv_into(self, buf):
+            alldata = ''.join(self.inbuf)
+            buf[:len(buf)] = alldata[:len(buf)]
+            self.inbuf = [alldata[len(buf):]]
+
+        @classmethod
+        def pair(cls):
+            a, b = cls(), cls()
+            a.setpeer(b)
+            b.setpeer(a)
+            return a, b
+
+    c, s = BufSock.pair()
+
+
+
 def google_client_test(ctx):
     s = socket.create_connection(('google.com', 443))
     s2 = Socket(s, ctx)

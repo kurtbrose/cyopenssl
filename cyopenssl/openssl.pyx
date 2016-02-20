@@ -148,7 +148,7 @@ cdef extern from "openssl/ssl.h" nogil:
         pass
 
     ctypedef struct SSL_SESSION:
-        pass
+        int references
 
     ctypedef struct SSL_CIPHER:
         pass
@@ -167,6 +167,7 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_pending(const SSL *ssl)
     int SSL_set_fd(SSL *ssl, int fd)
     int SSL_set_session(SSL *ssl, SSL_SESSION *session)
+    SSL_SESSION *SSL_get_session(SSL *ssl)
     void SSL_set_connect_state(SSL *ssl)
     void SSL_set_accept_state(SSL *ssl)
     BIO *SSL_get_rbio(SSL *ssl)
@@ -227,8 +228,10 @@ cdef extern from "openssl/ssl.h" nogil:
     int SSL_CIPHER_get_bits(SSL_CIPHER *cipher, int *alg_bits)
 
     const SSL_METHOD *TLSv1_method()
+    const SSL_METHOD *TLSv1_1_method()
 
     SSL_SESSION *d2i_SSL_SESSION(SSL_SESSION **a, const unsigned char **pp, long length)
+    int i2d_SSL_SESSION(SSL_SESSION *in_, unsigned char **pp)
     void SSL_SESSION_free(SSL_SESSION* sess)
 
     # set_verify parameters
@@ -294,7 +297,7 @@ cdef class Context:
                   bytes ca_certs=None, bytes passphrase=None):
         self.ctx = NULL
         if method == "TLSv1":
-            self.ctx = SSL_CTX_new(TLSv1_method())
+            self.ctx = SSL_CTX_new(TLSv1_1_method())
         else:
             raise ValueError("only TLSv1 supported")
         if self.ctx == NULL:
@@ -314,7 +317,7 @@ cdef class Context:
 
     def add_session(self, Session session not None):
         SSL_CTX_add_session(self.ctx, session.sess)
-        session.sess = NULL
+        session.sess.references += 1
 
     def set_verify(self, int flags):
         '''
@@ -430,9 +433,33 @@ cdef int passwd_cb_passthru(char *buf, int size, int rwflag, void *userdata) nog
 
 
 cdef class Session:
+    '''
+    A Session may be serialized for long term storage, or
+    transfer to another process.  Or, it may be explicitly passed
+    to the constructor of a Socket for manual management of
+    session cache.
+    '''
     cdef:
         SSL_SESSION* sess
 
+    def dumps(self):
+        '''
+        Serialize the Session into a bytearray and return.
+        '''
+        cdef int size
+        cdef unsigned char *bufptr
+        size = i2d_SSL_SESSION(self.sess, NULL)
+        buf = bytearray(size)
+        bufptr = buf
+        i2d_SSL_SESSION(self.sess, &bufptr)
+        return buf
+
+    def __dealloc__(self):
+        if self.sess:
+            SSL_SESSION_free(self.sess)
+
+
+cdef class ParsedSession(Session):
     def __cinit__(self, data):
         self.sess = NULL
         cdef const unsigned char* data_ptr
@@ -441,9 +468,15 @@ cdef class Session:
         if self.sess == NULL:
             raise ValueError("d2i_SSL_SESSION error")
 
-    def __dealloc__(self):
-        if self.sess:
-            SSL_SESSION_free(self.sess)
+
+cdef BorrowedSession(SSL_SESSION *sess):
+    '''
+    Factory function for a session borrowed from an
+    existing one.
+    '''
+    session = Session()
+    session.sess = sess
+    session.sess.references += 1
 
 
 cdef class PrivateKey:
@@ -794,6 +827,14 @@ cdef class Socket:
                 raise SSLError("BIO_SHOULD_RETRY but neither read nor write set")
             return 1
         return 0
+
+    def get_session(self):
+        '''
+        Returns the Session (SSL_SESSION wrapper) currently used by this
+        Socket.
+        '''
+        return BorrowedSession(SSL_get_session(self.ssl))
+
 
     def state_string(self):
         return <bytes>SSL_state_string(self.ssl)
