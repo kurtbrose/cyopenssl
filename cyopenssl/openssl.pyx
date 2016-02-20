@@ -81,10 +81,18 @@ cdef extern from "openssl/x509.h" nogil:
     ctypedef struct X509_STORE:
         int references
 
+    ctypedef struct X509_NAME:
+        pass
+
     X509 *d2i_X509(X509 **px, const unsigned char **inp, int len)
     int i2d_X509(X509 *x, unsigned char **out)
     X509 *X509_new()
+    X509_NAME *X509_get_subject_name(X509 *self)
+    X509_NAME *X509_get_issuer_name(X509 *self)
+    EVP_PKEY *X509_get_pubkey(X509 *self)
     void X509_free(X509 *a)
+
+    int X509_NAME_cmp(X509_NAME*, X509_NAME*)
 
     X509_STORE *X509_STORE_new()
     void X509_STORE_free(X509_STORE *x509_store)
@@ -104,6 +112,8 @@ cdef extern from "openssl/x509.h" nogil:
 cdef extern from "openssl/x509_vfy.h" nogil:
     ctypedef struct X509_STORE_CTX:
         pass
+
+    int X509_verify(X509 *cert, EVP_PKEY *pub)  # 1 means EVP_PKEY was signed by X509 cert
 
 
 cdef extern from "openssl/pem.h" nogil:
@@ -514,6 +524,17 @@ cdef class Certificate:
             code = ERR_get_error()
             if code:
                 raise ValueError(ERR_error_string(code, NULL))
+
+    def is_signed_by(self, Certificate other):
+        cdef:
+            EVP_PKEY *pub
+            int result
+        if X509_NAME_cmp(X509_get_issuer_name(self.cert), X509_get_subject_name(other.cert)):
+            return False
+        pub = X509_get_pubkey(self.cert)
+        result = X509_verify(other.cert, pub)
+        EVP_PKEY_free(pub)
+        return result == 1
 
     def __dealloc__(self):
         if self.cert:
