@@ -87,19 +87,37 @@ def thread_network_test(ctx):
 
 def session_test(ctx):
     class BufSock(object):
-        def __init__(self):
-            self.inbuf = []
+        fileno = lambda self: -1
 
-        def setpeer(self, o):
+        def __init__(self):
+            self.inbuf = bytearray()
+            self.sent_msgs = []
+
+        def setpeer(self, peer):
             self.peer = peer
 
         def sendall(self, data):
-            self.peer.inbuf.append(data)
+            unparsed = data
+            while unparsed:
+                nxt = TLS_Msg(unparsed)
+                print "sending...", nxt
+                unparsed = unparsed[len(nxt):]
+                break
+            self.peer.inbuf += data
 
         def recv_into(self, buf):
-            alldata = ''.join(self.inbuf)
-            buf[:len(buf)] = alldata[:len(buf)]
-            self.inbuf = [alldata[len(buf):]]
+            if not self.inbuf:
+                raise self.NeedPeerData()
+            recvd = min(len(buf), len(self.inbuf))
+            unparsed = self.inbuf[:recvd]
+            while unparsed:
+                nxt = TLS_Msg(unparsed)
+                print 'recving...', nxt
+                unparsed = unparsed[len(nxt):]
+                break
+            buf[:recvd] = self.inbuf[:recvd]
+            self.inbuf = self.inbuf[recvd:]
+            return recvd
 
         @classmethod
         def pair(cls):
@@ -108,8 +126,58 @@ def session_test(ctx):
             b.setpeer(a)
             return a, b
 
+        class NeedPeerData(ValueError):
+            pass
+
     c, s = BufSock.pair()
 
+    tls_c = Socket(c, ctx)
+    tls_s = Socket(s, ctx, server_side=True)
+    tls_c.enable_debug_print()
+    tls_s.enable_debug_print()
+
+    for i in range(10):
+        try:
+            tls_c.do_handshake()
+            tls_s.do_handshake()
+            break
+        except BufSock.NeedPeerData:
+            try:
+                tls_s.do_handshake()
+                tls_c.do_handshake()
+            except BufSock.NeedPeerData:
+                pass
+    else:
+        raise ValueError('could not complete TLS handshake')
+
+    try:
+        print "sending application data",
+        tls_c.send('hello' * 1024)
+    except BufSock.NeedPeerData:
+        raise ValueError("client could not send without server data")
+    try:
+        print tls_s.recv(1)
+    except BufSock.NeedPeerData:
+        raise ValueError("server did not recv client data")
+
+
+class TLS_Msg(object):
+    def __init__(self, data):
+        self.content_type = data[0]
+        self.version = data[1:3]
+        self.length = data[3] * 256 + data[4]
+        self.data = data[:self.length + 5]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __repr__(self):
+        TYPES = {
+            20: 'change_cipher_spec', 21: 'alert', 22: 'handshake',
+            23: 'application_data'
+        }
+        return "<TLS_Msg type={0}, len={1}>".format(
+            TYPES.get(self.content_type, self.content_type), self.length)
 
 
 def google_client_test(ctx):

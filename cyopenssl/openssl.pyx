@@ -724,7 +724,7 @@ cdef class Socket:
         # other practical implementations seem to call it in a loop
         # TODO: NGINX does some fancy stuff here.... investigate that
 
-    def settimeout(self, timeout):
+    def settimeout(self, float timeout):
         self.timeout = timeout
         self.sock.settimeout(timeout)
 
@@ -743,7 +743,7 @@ cdef class Socket:
             shutdown = SSL_get_shutdown(ssl)
             if shutdown and op != DO_SSL_SHUTDOWN:
                 if shutdown & SSL_RECEIVED_SHUTDOWN:
-                    raise SSLError("recieved shutdown")
+                    raise SSLError("received shutdown")
                 elif shutdown & SSL_SENT_SHUTDOWN:
                     raise SSLError("sent shutdown")
                 else:
@@ -758,14 +758,15 @@ cdef class Socket:
                     ret = SSL_do_handshake(ssl)
                 elif op == DO_SSL_SHUTDOWN:
                     ret = SSL_shutdown(ssl)
-            if ret > 0 and (op == DO_SSL_WRITE or op == DO_SSL_READ):
-                return ret
+            if ret > 0:
+                if op == DO_SSL_READ:
+                    return ret
+                elif op == DO_SSL_WRITE:
+                    self._flush(start)
+                    return ret
             err = SSL_get_error(self.ssl, ret)
-            io_size = BIO_pending(self.wbio)
-            if io_size:
-                io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
-                self._update_timeout(start)
-                self.sock.sendall(self.buf[:io_size])
+            if BIO_pending(self.wbio):
+                self._flush(start)
             if err == SSL_ERROR_NONE:
                 return ret
             elif err == SSL_ERROR_SSL:
@@ -780,9 +781,7 @@ cdef class Socket:
                 # raise SSLWantRead()
             elif err == SSL_ERROR_WANT_WRITE:
                 # xfer data from BIO to socket
-                io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
-                self._update_timeout(start)
-                self.sock.sendall(self.buf[:io_size])
+                self._flush(start)
                 # raise SSLWantWrite()
             elif err == SSL_ERROR_WANT_X509_LOOKUP:
                 raise SSLError("SSL_ERROR_WANT_X509_LOOKUP")
@@ -801,6 +800,13 @@ cdef class Socket:
     def __dealloc__(self):
         if self.ssl:
             SSL_free(self.ssl)
+
+    cdef _flush(self, double start):
+        'flush write bio to socket'
+        cdef int io_size
+        io_size = BIO_read(self.wbio, <char *>self.buf, 32 * 1024)
+        self._update_timeout(start)
+        self.sock.sendall(self.buf[:io_size])
 
     cdef int _update_timeout(self, double since) except -1:
         cdef double left
