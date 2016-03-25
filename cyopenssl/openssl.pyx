@@ -649,6 +649,8 @@ cdef class Socket:
         else:
             SSL_set_connect_state(self.ssl)
             if session is not None:
+                if session.sess == NULL:
+                    raise ValueError("passed SSL Session with null session structure")
                 SSL_set_session(self.ssl, session.sess)
         '''
         timeout = sock.gettimeout()
