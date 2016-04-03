@@ -1203,8 +1203,12 @@ CURVES = {}
 
 
 cdef _curves_init():
-    CURVES['secp224r1'] = NID_secp224r1
-    CURVES['X9_62_prime256v1'] = NID_X9_62_prime256v1
+    curves = {
+        'secp224r1': NID_secp224r1,
+        'X9_62_prime256v1': NID_X9_62_prime256v1
+    }
+    for name, nid in curves.items():
+        CURVES[name] = EllipticCurve(name, nid)
 
 
 _curves_init()
