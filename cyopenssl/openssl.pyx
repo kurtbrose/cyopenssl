@@ -11,6 +11,9 @@ cdef extern from "openssl/evp.h" nogil:
     ctypedef struct EVP_CIPHER:
         pass
 
+    ctypedef struct EVP_PKEY_CTX:
+        pass
+
     ctypedef struct EVP_PKEY:
         pass
 
@@ -36,7 +39,20 @@ cdef extern from "openssl/evp.h" nogil:
 
     int EVP_DecryptFinal_ex(EVP_CIPHER_CTX *ctx, unsigned char *out, int *outl)
 
+    EVP_PKEY_CTX* EVP_PKEY_CTX_new_id(int id, ENGINE *engine)
+    EVP_PKEY_CTX* EVP_PKEY_CTX_new(EVP_PKEY *pkey, ENGINE *e)
+    void EVP_PKEY_CTX_free(EVP_PKEY_CTX *ctx)
+    int EVP_PKEY_CTX_set_ec_paramgen_curve_nid(EVP_PKEY_CTX *ctx, int nid)
+
     int EVP_CIPHER_CTX_ctrl(EVP_CIPHER_CTX *ctx, int type, int arg, void *ptr)
+
+    int EVP_PKEY_derive_init(EVP_PKEY_CTX *ctx)
+    int EVP_PKEY_derive(EVP_PKEY_CTX *ctx, unsigned char *key, size_t *keylen)
+    int EVP_PKEY_derive_set_peer(EVP_PKEY_CTX *ctx, EVP_PKEY *peer)
+    int EVP_PKEY_keygen_init(EVP_PKEY_CTX *ctx)
+    int EVP_PKEY_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey)
+    int EVP_PKEY_paramgen_init(EVP_PKEY_CTX *ctx)
+    int EVP_PKEY_paramgen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey)
 
     void EVP_PKEY_free(EVP_PKEY *key)
 
@@ -51,6 +67,11 @@ cdef extern from "openssl/evp.h" nogil:
     int EVP_CTRL_GCM_SET_IVLEN
     int EVP_CTRL_GCM_GET_TAG
     int EVP_CTRL_GCM_SET_TAG
+    int EVP_PKEY_EC
+
+
+cdef extern from "openssl/ec.h" nogil:
+    int NID_secp224r1, NID_X9_62_prime256v1
 
 
 cdef extern from "openssl/pkcs7.h" nogil:
@@ -1160,6 +1181,94 @@ cdef class PKCS7_digest:
     def __dealloc__(self):
         if self.p7:
             PKCS7_free(self.p7)
+
+
+cdef class EllipticCurve:
+    cdef int nid
+    cdef bytes name
+
+    def __cinit__(self, bytes name, int nid):
+        self.name = name
+        self.nid = nid
+
+    def __repr__(self):
+        return "<EllipticCurve {0}>".format(self.name)
+
+
+cdef class PublicKey:
+    cdef EVP_PKEY *key
+
+
+CURVES = {}
+
+
+cdef _curves_init():
+    CURVES['secp224r1'] = NID_secp224r1
+    CURVES['X9_62_prime256v1'] = NID_X9_62_prime256v1
+
+
+_curves_init()
+
+
+def curve_by_name(bytes name):
+    if name not in CURVES:
+        raise ValueError("unknown elliptic curve: " + name)
+    return CURVES[name]
+
+
+def ecdh(PublicKey pubkey, EllipticCurve curve):
+    cdef:
+        EVP_PKEY_CTX *ctx = NULL
+        EVP_PKEY *pkey = NULL, *peerkey = NULL
+        size_t secret_len
+
+    try:
+        pkey = ec_keypair_generate(curve)
+        ctx = EVP_PKEY_CTX_new(pkey, NULL)
+        assert ctx != NULL
+        assert EVP_PKEY_derive_init(ctx) == 1
+        assert EVP_PKEY_derive_set_peer(ctx, pubkey.key) == 1
+        assert EVP_PKEY_derive(ctx, NULL, &secret_len) == 1
+        secret = bytearray(secret_len)
+        assert EVP_PKEY_derive(ctx, secret, &secret_len) == 1
+    finally:
+        if ctx:
+            EVP_PKEY_CTX_free(ctx)
+        if peerkey:
+            EVP_PKEY_free(peerkey)
+        if pkey:
+            EVP_PKEY_free(pkey)
+    return secret
+
+
+cdef EVP_PKEY* ec_keypair_generate(EllipticCurve curve) except NULL:
+    cdef:
+        EVP_PKEY_CTX *pctx = NULL, *kctx = NULL
+        EVP_PKEY *params = NULL, *pkey = NULL
+
+    try:
+        pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL)
+        assert pctx != NULL
+        assert EVP_PKEY_paramgen_init(pctx) == 1
+        assert EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx, curve.nid) == 1
+        assert EVP_PKEY_paramgen(pctx, &params) != 0
+        kctx = EVP_PKEY_CTX_new(params, NULL)
+        assert kctx != NULL
+        assert EVP_PKEY_keygen_init(kctx) == 1
+        assert EVP_PKEY_keygen(kctx, &pkey) == 1
+        assert pkey != NULL
+    finally:
+        if kctx:
+            EVP_PKEY_CTX_free(kctx)
+        if params:
+            EVP_PKEY_free(params)
+        if pctx:
+            EVP_PKEY_CTX_free(pctx)
+    return pkey
+
+
+def ecies(PublicKey pubkey):
+    pass
 
 
 cdef _library_init():
