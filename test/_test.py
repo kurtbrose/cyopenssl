@@ -85,7 +85,7 @@ def thread_network_test(ctx):
         print "\n".join(["{}".format(e[1]) for e in log])
 
 
-def session_test(ctx):
+def session_test(ctx, ping_pongs=1):
     class BufSock(object):
         fileno = lambda self: -1
 
@@ -100,7 +100,7 @@ def session_test(ctx):
             unparsed = data
             while unparsed:
                 nxt = TLS_Msg(unparsed)
-                print "sending...", nxt
+                #print "sending...", nxt
                 unparsed = unparsed[len(nxt):]
                 break
             self.peer.inbuf += data
@@ -112,7 +112,7 @@ def session_test(ctx):
             unparsed = self.inbuf[:recvd]
             while unparsed:
                 nxt = TLS_Msg(unparsed)
-                print 'recving...', nxt
+                #print 'recving...', nxt
                 unparsed = unparsed[len(nxt):]
                 break
             buf[:recvd] = self.inbuf[:recvd]
@@ -150,15 +150,17 @@ def session_test(ctx):
     else:
         raise ValueError('could not complete TLS handshake')
 
-    try:
-        print "sending application data",
-        tls_c.send('hello' * 1024)
-    except BufSock.NeedPeerData:
-        raise ValueError("client could not send without server data")
-    try:
-        print tls_s.recv(1)
-    except BufSock.NeedPeerData:
-        raise ValueError("server did not recv client data")
+    for i in range(ping_pongs):
+        try:
+            #print "sending application data",
+            tls_c.send('h' * 1024)
+        except BufSock.NeedPeerData:
+            raise ValueError("client could not send without server data")
+        try:
+            #print 
+            tls_s.recv(1024)
+        except BufSock.NeedPeerData:
+            raise ValueError("server did not recv client data")
 
 
 class TLS_Msg(object):
