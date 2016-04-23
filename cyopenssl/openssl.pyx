@@ -643,11 +643,13 @@ cdef class Socket:
 
     def __cinit__(self, sock, Context context not None, bool server_side=False,
             bool do_handshake_on_connect=True, bool suppress_ragged_eofs=True,
-            Session session=None, bytes cipherlist=b''):
+            Session session=None, bytes cipherlist=b'', bool debug_print=False):
 
         self.ssl = SSL_new(context.ctx)
         if self.ssl == NULL:
             raise Exception("SSL_new error")
+        if debug_print:
+            self.enable_debug_print()
         self.server_side = server_side
         self.do_handshake_on_connect = do_handshake_on_connect
         self.suppress_ragged_eofs = suppress_ragged_eofs
@@ -754,6 +756,7 @@ cdef class Socket:
     cdef int _do_ssl(self, SSL_OP op, char* data, int size) except *:
         cdef:
             int ret = 0, err = 0, shutdown = 0
+            long verify_result
             int io_size = 0
             double timeout = self.timeout
             double start = 0
@@ -793,6 +796,9 @@ cdef class Socket:
             if err == SSL_ERROR_NONE:
                 return ret
             elif err == SSL_ERROR_SSL:
+                verify_result = SSL_get_verify_result(ssl)
+                if verify_result:
+                    raise SSLError("SSL_ERROR_SSL, peer cert verify error: " + str(verify_result))
                 raise SSLError("SSL_ERROR_SSL")
             elif err == SSL_ERROR_WANT_READ:
                 # xfer data from socket to BIO
@@ -912,6 +918,12 @@ cdef class Socket:
     def session_reused(self):
         'returns True if the last handshake reused a cached session'
         return SSL_session_reused(self.ssl) != 0
+
+    def verify_result(self):
+        'returns True if peer cert was verified'
+        if SSL_get_verify_result(self.ssl) == 0:
+            return True
+        return False
 
 
 '''

@@ -85,7 +85,7 @@ def thread_network_test(ctx):
         print "\n".join(["{}".format(e[1]) for e in log])
 
 
-def session_test(ctx, ping_pongs=1):
+def null_sock_test(server_ctx, client_ctx, ping_pongs=1):
     class BufSock(object):
         fileno = lambda self: -1
 
@@ -131,8 +131,8 @@ def session_test(ctx, ping_pongs=1):
 
     c, s = BufSock.pair()
 
-    tls_c = Socket(c, ctx)
-    tls_s = Socket(s, ctx, server_side=True)
+    tls_c = Socket(c, client_ctx)
+    tls_s = Socket(s, server_ctx, server_side=True)
     tls_c.enable_debug_print()
     tls_s.enable_debug_print()
 
