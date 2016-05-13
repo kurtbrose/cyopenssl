@@ -247,6 +247,7 @@ cdef extern from "openssl/ssl.h" nogil:
     long SSL_CTX_set_session_cache_mode(SSL_CTX *ctx, long mode)
     long SSL_CTX_get_session_cache_mode(SSL_CTX *ctx)
     long SSL_CTX_set_options(SSL_CTX *ctx, long options)
+    long SSL_CTX_get_options(SSL_CTX *ctx)
     long SSL_CTX_add_extra_chain_cert(SSL_CTX *ctx, X509 *x509)
     int SSL_CTX_check_private_key(const SSL_CTX *ctx)
 
@@ -260,6 +261,7 @@ cdef extern from "openssl/ssl.h" nogil:
 
     const SSL_METHOD *TLSv1_method()
     const SSL_METHOD *TLSv1_1_method()
+    const SSL_METHOD *SSLv23_method()
 
     SSL_SESSION *d2i_SSL_SESSION(SSL_SESSION **a, const unsigned char **pp, long length)
     int i2d_SSL_SESSION(SSL_SESSION *in_, unsigned char **pp)
@@ -295,6 +297,9 @@ cdef extern from "openssl/ssl.h" nogil:
     # SSL shutdown states
     int SSL_SENT_SHUTDOWN, SSL_RECEIVED_SHUTDOWN
 
+    # version flags
+    long SSL_OP_NO_SSLv2, SSL_OP_NO_SSLv3
+
 
 
 cdef extern from "openssl/err.h":
@@ -327,12 +332,17 @@ cdef class Context:
     def __cinit__(self, method, bool verify=True, bytes certfile=None, bytes keyfile=None,
                   bytes ca_certs=None, bytes passphrase=None):
         self.ctx = NULL
-        if method == "TLSv1":
+        if method == "TLSv1.1":
             self.ctx = SSL_CTX_new(TLSv1_1_method())
+        elif method == "TLS":
+            self.ctx = SSL_CTX_new(SSLv23_method())
         else:
-            raise ValueError("only TLSv1 supported")
+            raise ValueError("supported versions are 'TLSv1.1' and 'TLS' (1.0, 1.1, 1.2)")
         if self.ctx == NULL:
             raise ValueError("SSL context creation failed")
+        if method == "TLS":
+            SSL_CTX_set_options(self.ctx,
+                SSL_CTX_get_options(self.ctx) | SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3)
         if not verify:
             SSL_CTX_set_verify(self.ctx, SSL_VERIFY_NONE, NULL)
 
@@ -1235,7 +1245,8 @@ def curve_by_name(bytes name):
 def ecdh(PublicKey pubkey, EllipticCurve curve):
     cdef:
         EVP_PKEY_CTX *ctx = NULL
-        EVP_PKEY *pkey = NULL, *peerkey = NULL
+        EVP_PKEY *pkey = NULL
+        EVP_PKEY *peerkey = NULL
         size_t secret_len
 
     try:
@@ -1259,8 +1270,10 @@ def ecdh(PublicKey pubkey, EllipticCurve curve):
 
 cdef EVP_PKEY* ec_keypair_generate(EllipticCurve curve) except NULL:
     cdef:
-        EVP_PKEY_CTX *pctx = NULL, *kctx = NULL
-        EVP_PKEY *params = NULL, *pkey = NULL
+        EVP_PKEY_CTX *pctx = NULL
+        EVP_PKEY_CTX *kctx = NULL
+        EVP_PKEY *params = NULL
+        EVP_PKEY *pkey = NULL
 
     try:
         pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL)

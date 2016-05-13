@@ -193,7 +193,7 @@ def google_client_test(ctx):
 def init_contexts():
     contexts = []
     for s in ['1k', '2k', '4k']:
-        ctx = Context('TLSv1')
+        ctx = Context('TLSv1.1')
         ctx.set_password('test')
         ctx.use_certificate_chain_file('{0}/cert{1}.pem'.format(RESOURCES, s))
         ctx.load_client_CA_list('{0}/cert{1}.pem'.format(RESOURCES, s))
