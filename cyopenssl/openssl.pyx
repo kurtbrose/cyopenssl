@@ -97,7 +97,7 @@ cdef extern from "openssl/pkcs7.h" nogil:
 
 cdef extern from "openssl/x509.h" nogil:
     ctypedef struct X509:
-        int references
+        pass
 
     ctypedef struct X509_STORE:
         int references
@@ -108,6 +108,7 @@ cdef extern from "openssl/x509.h" nogil:
     X509 *d2i_X509(X509 **px, const unsigned char **inp, int len)
     int i2d_X509(X509 *x, unsigned char **out)
     X509 *X509_new()
+    int X509_up_ref(X509* a)
     X509_NAME *X509_get_subject_name(X509 *self)
     X509_NAME *X509_get_issuer_name(X509 *self)
     EVP_PKEY *X509_get_pubkey(X509 *self)
@@ -179,7 +180,7 @@ cdef extern from "openssl/ssl.h" nogil:
         pass
 
     ctypedef struct SSL_SESSION:
-        int references
+        pass
 
     ctypedef struct SSL_CIPHER:
         pass
@@ -314,6 +315,31 @@ cdef extern from "openssl/err.h":
 from cpython.mem cimport PyMem_Malloc, PyMem_Free
 from cpython cimport bool, PyErr_SetExcFromWindowsErr, PyErr_SetFromErrno, PyErr_Clear
 
+'''
+IF X509_up_ref:
+    cdef X509* new_x509_ref(X509* a):
+        X509_up_ref(a)
+        return a
+ELSE:
+'''
+cdef X509* x509_new_ref(X509* a):
+    cdef:
+        unsigned char* buf
+        unsigned char *p
+        int size
+        X509 *b
+
+    size = i2d_X509(a, NULL)
+    if size < 1:
+        return NULL
+    p = buf = <unsigned char *>PyMem_Malloc(size)
+    if buf == NULL:
+        return NULL
+    i2d_X509(a, &p)
+    b = d2i_X509(NULL, &buf, size)
+    PyMem_Free(buf)
+    return b
+
 
 cdef struct PasswordInfo:
     int nbytes
@@ -357,8 +383,7 @@ cdef class Context:
         SSL_CTX_set_options(self.ctx, options)
 
     def add_session(self, Session session not None):
-        SSL_CTX_add_session(self.ctx, session.sess)
-        session.sess.references += 1
+        SSL_CTX_add_session(self.ctx, BorrowedSession(session.sess))
 
     def set_verify(self, int flags):
         '''
@@ -400,9 +425,8 @@ cdef class Context:
                         repr(cert) + "\n" + _pop_and_format_error_list())
 
     def use_certificate(self, Certificate cert not None):
-        if not SSL_CTX_use_certificate(self.ctx, cert.cert):
+        if not SSL_CTX_use_certificate(self.ctx, X509_new_ref((<Certificate?>cert).cert)):
             raise _ssleay_err2value_err() or ValueError("SSL_CTX_use_certificate() error")
-        cert.cert.references += 1
 
     def set_cert_store(self, CertStore cert_store not None):
         '''
@@ -417,9 +441,8 @@ cdef class Context:
         Note: this operation destroys the Certificate; ownership of the underlying
         structure passes to the Context
         '''
-        if not SSL_CTX_add_extra_chain_cert(self.ctx, cert.cert):
+        if not SSL_CTX_add_extra_chain_cert(self.ctx, X509_new_ref((<Certificate?>cert).cert)):
             raise _ssleay_err2value_err() or ValueError("SSL_CTX_add_extra_chain_cert() failed")
-        cert.cert.references += 1
 
     def get_cert_store(self):
         cdef X509_STORE *store = SSL_CTX_get_cert_store(self.ctx)
@@ -517,7 +540,10 @@ cdef BorrowedSession(SSL_SESSION *sess):
     '''
     session = Session()
     session.sess = sess
-    session.sess.references += 1
+    parsed = ParsedSession(session.dumps())
+    session.sess = parsed.sess
+    parsed.sess = NULL
+    return session
 
 
 cdef class PrivateKey:
