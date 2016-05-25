@@ -62,3 +62,65 @@ def test():
 
 
 test()
+
+
+class BufSock(object):
+    fileno = lambda self: -1
+
+    def __init__(self):
+        self.inbuf = bytearray()
+        self.sent_msgs = []
+
+    def setpeer(self, peer):
+        self.peer = peer
+
+    def sendall(self, data):
+        self.peer.inbuf += data
+
+    def recv_into(self, buf):
+        if not self.inbuf:
+            raise self.NeedPeerData()
+        recvd = min(len(buf), len(self.inbuf))
+        buf[:recvd] = self.inbuf[:recvd]
+        self.inbuf = self.inbuf[recvd:]
+        return recvd
+
+    @classmethod
+    def pair(cls):
+        a, b = cls(), cls()
+        a.setpeer(b)
+        b.setpeer(a)
+        return a, b
+
+    class NeedPeerData(ValueError):
+        pass
+
+
+def test_parallel(server_ctx, client_ctx):
+    pairs = [BufSock.pair() for i in range(4)]
+    pairs = [(Socket(c, client_ctx), Socket(s, server_ctx, server_side=True)) for c,s in pairs]
+
+    sent = 0
+    not_sent = 0
+    recvd = 0
+    not_recvd = 0
+    for i in range(5):
+        for c, s in pairs:
+            try:
+                c.send('a')
+                sent += 1
+            except BufSock.NeedPeerData:
+                not_sent += 1
+            try:
+                s.recv(1)
+                recvd += 1
+            except BufSock.NeedPeerData:
+                not_recvd += 1
+
+    assert sent, "no application data got through"
+    assert not_sent, "application data got through without handshake"
+    assert recvd, "no application data received"
+    assert not_recvd, "application data recieved without handshake"
+
+
+test_parallel(make_ctx(), make_ctx())
