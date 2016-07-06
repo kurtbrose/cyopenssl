@@ -1,3 +1,8 @@
+cdef extern from "openssl/ec.h" nogil:
+    ctypedef struct EC_KEY:
+        pass
+
+
 cdef extern from "openssl/evp.h" nogil:
     void OpenSSL_add_all_algorithms()
 
@@ -49,6 +54,10 @@ cdef extern from "openssl/evp.h" nogil:
     int EVP_PKEY_keygen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey)
     int EVP_PKEY_paramgen_init(EVP_PKEY_CTX *ctx)
     int EVP_PKEY_paramgen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey)
+
+    int EVP_PKEY_assign_EC_KEY(EVP_PKEY *pkey,EC_KEY *key)
+
+    EVP_PKEY *EVP_PKEY_new()
 
     void EVP_PKEY_free(EVP_PKEY *key)
 
