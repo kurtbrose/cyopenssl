@@ -56,6 +56,7 @@ cdef extern from "openssl/evp.h" nogil:
     int EVP_PKEY_paramgen(EVP_PKEY_CTX *ctx, EVP_PKEY **ppkey)
 
     int EVP_PKEY_assign_EC_KEY(EVP_PKEY *pkey,EC_KEY *key)
+    EC_KEY *EVP_PKEY_get1_EC_KEY(EVP_PKEY *pkey)
 
     EVP_PKEY *EVP_PKEY_new()
 

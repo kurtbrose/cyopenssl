@@ -24,6 +24,11 @@ cdef extern from "openssl/ec.h" nogil:
     ctypedef struct EC_GROUP:
         pass
 
+    ctypedef enum point_conversion_form_t:
+        POINT_CONVERSION_COMPRESSED = 2
+        POINT_CONVERSION_UNCOMPRESSED = 4
+        POINT_CONVERSION_HYBRID = 6
+
     ctypedef struct EC_builtin_curve:
         int nid
         const char *comment
@@ -43,10 +48,18 @@ cdef extern from "openssl/ec.h" nogil:
     int EC_KEY_set_private_key(EC_KEY *key, const BIGNUM *prv)
     int EC_KEY_set_public_key(EC_KEY *key, const EC_POINT *pub)
 
+    const EC_GROUP *EC_KEY_get0_group(const EC_KEY *key)
+    const EC_POINT *EC_KEY_get0_public_key(const EC_KEY *key)
+
+
     EC_POINT *EC_POINT_new(const EC_GROUP *group)
 
     int EC_POINT_oct2point(const EC_GROUP *group, EC_POINT *p,
                         const unsigned char *buf, size_t len, BN_CTX *ctx)
+
+    size_t EC_POINT_point2oct(const EC_GROUP *group, const EC_POINT *p,
+                           point_conversion_form_t form,
+                           unsigned char *buf, size_t len, BN_CTX *ctx)
 
     int EC_POINT_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *n, 
         const EC_POINT *q, const BIGNUM *m, BN_CTX *ctx)
@@ -134,6 +147,27 @@ cdef class PublicKey:
 cdef class KeyPair:
     cdef EVP_PKEY *keypair
 
+    def encode_pubkey(self):
+        '''
+        encode the public key into SEC format, so it can be shared.
+        '''
+        cdef:
+            EC_GROUP *ec_group
+            EC_KEY *ec_key
+            EC_POINT *ec_point
+            size_t size
+
+        ec_key = EVP_PKEY_get1_EC_KEY(self.keypair)
+        ec_point = EC_KEY_get0_public_key(ec_key)
+        ec_group = EC_KEY_get0_group(ec_key)
+        size = EC_POINT_point2oct(ec_group, ec_point,
+            POINT_CONVERSION_COMPRESSED, NULL, 0, GLOBAL_BN_CTX)
+        buf = bytearray(size)
+        EC_POINT_point2oct(ec_group, ec_point, POINT_CONVERSION_COMPRESSED,
+            buf, size, GLOBAL_BN_CTX)
+        EC_KEY_free(ec_key)
+        return buf
+
     def __dealloc__(self):
         if self.keypair is not NULL:
             EVP_PKEY_free(self.keypair)
@@ -163,16 +197,13 @@ def int2keypair(n, EllipticCurve curve):
     return ret
 
 
-def ecdh(PublicKey pubkey, EllipticCurve curve):
+def ecdh(PublicKey pubkey, KeyPair keypair):
     cdef:
         EVP_PKEY_CTX *ctx = NULL
-        EVP_PKEY *pkey = NULL
-        EVP_PKEY *peerkey = NULL
         size_t secret_len
 
     try:
-        pkey = ec_keypair_generate(curve)
-        ctx = EVP_PKEY_CTX_new(pkey, NULL)
+        ctx = EVP_PKEY_CTX_new(keypair.keypair, NULL)
         assert ctx != NULL
         assert EVP_PKEY_derive_init(ctx) == 1
         assert EVP_PKEY_derive_set_peer(ctx, pubkey.key) == 1
@@ -182,14 +213,13 @@ def ecdh(PublicKey pubkey, EllipticCurve curve):
     finally:
         if ctx:
             EVP_PKEY_CTX_free(ctx)
-        if peerkey:
-            EVP_PKEY_free(peerkey)
-        if pkey:
-            EVP_PKEY_free(pkey)
     return secret
 
 
-cdef EVP_PKEY* ec_keypair_generate(EllipticCurve curve) except NULL:
+def gen_keypair(EllipticCurve curve):
+    '''
+    generate a new random EC keypair on the given curve
+    '''
     cdef:
         EVP_PKEY_CTX *pctx = NULL
         EVP_PKEY_CTX *kctx = NULL
@@ -214,7 +244,10 @@ cdef EVP_PKEY* ec_keypair_generate(EllipticCurve curve) except NULL:
             EVP_PKEY_free(params)
         if pctx:
             EVP_PKEY_CTX_free(pctx)
-    return pkey
+
+    ret = KeyPair()
+    ret.keypair = pkey
+    return ret
 
 
 CURVES = {}
