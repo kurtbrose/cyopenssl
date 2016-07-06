@@ -38,10 +38,16 @@ else:
     libraries = ['ssl', 'crypto']
 
 
-extension = Extension('openssl', sources=['cyopenssl/openssl.pyx'],
-    libraries=libraries, extra_compile_args=extra_compile_args,
-    extra_objects=extra_objects, include_dirs=include_dirs,
-    library_dirs=library_dirs)
+def make_extension(name, sources):
+    return Extension(name, sources,
+        libraries=libraries, extra_compile_args=extra_compile_args,
+        extra_objects=extra_objects, include_dirs=include_dirs,
+        library_dirs=library_dirs)
+
+
+extensions = [
+    make_extension('openssl', ['cyopenssl/openssl.pyx']),
+    make_extension('ec', ['cyopenssl/ec.pyx'])]
 
 
 setup(
@@ -57,5 +63,5 @@ setup(
         'License :: OSI Approved :: MIT License'],
     packages=['cyopenssl'],
     install_requires=['Cython'],
-    ext_modules=cythonize(extension)
+    ext_modules=cythonize(extensions)
     )
