@@ -23,6 +23,8 @@ cdef extern from "openssl/bn.h" nogil:
 
     int BN_num_bytes(const BIGNUM *a)
 
+    void BN_zero(BIGNUM *a)
+
 
 cdef extern from "openssl/ec.h" nogil:
     ctypedef struct EC_KEY:
@@ -55,6 +57,7 @@ cdef extern from "openssl/ec.h" nogil:
 
     void EC_KEY_free(EC_KEY *key)
 
+    int EC_KEY_set_group(EC_KEY *key, const EC_GROUP *group)
     int EC_KEY_set_private_key(EC_KEY *key, const BIGNUM *prv)
     int EC_KEY_set_public_key(EC_KEY *key, const EC_POINT *pub)
 
@@ -75,6 +78,7 @@ cdef extern from "openssl/ec.h" nogil:
         const EC_POINT *q, const BIGNUM *m, BN_CTX *ctx)
 
     EC_GROUP *EC_GROUP_new_by_curve_name(int nid)
+    const EC_POINT *EC_GROUP_get0_generator(const EC_GROUP *group)
 
 
 cdef extern from "openssl/ecdsa.h" nogil:
@@ -97,6 +101,15 @@ cdef extern from "openssl/ecdsa.h" nogil:
 
 
 from  evp_h cimport *
+
+
+cdef extern from "openssl/err.h":
+    unsigned long ERR_get_error()
+    unsigned long ERR_peek_error()
+    char *ERR_error_string(unsigned long e, char *buf)
+    const char *ERR_lib_error_string(unsigned long e)
+    const char *ERR_func_error_string(unsigned long e)
+    const char *ERR_reason_error_string(unsigned long e)
 
 
 cdef BN_CTX *GLOBAL_BN_CTX = BN_CTX_new()
@@ -125,7 +138,7 @@ cdef class EllipticCurve:
         return "<EllipticCurve {0}>".format(self.name)
 
 
-cdef EVP_PKEY *ec2evp_pkey(EC_POINT *pub_point, BIGNUM *priv_n) except NULL:
+cdef EVP_PKEY *ec2evp_pkey(EC_POINT *pub_point, BIGNUM *priv_n, EC_GROUP *group) except NULL:
     '''
     Wraps an EC_POINT into an EVP_PKEY structure with that point
     as the public key; the EVP_PKEY assumes ownership of the EC_POINT
@@ -138,7 +151,12 @@ cdef EVP_PKEY *ec2evp_pkey(EC_POINT *pub_point, BIGNUM *priv_n) except NULL:
     ec_key = EC_KEY_new()
     if ec_key is NULL:
         raise MemoryError()  # could not allocate EC_KEY
-    EC_KEY_set_public_key(ec_key, pub_point)
+    if pub_point is NULL:
+        raise ValueError("pub_point may not be NULL")
+    if EC_KEY_set_group(ec_key, group) == 0:
+        raise ValueError('EC_KEY_set_group() failed: ' + _pop_and_format_error_list())
+    if EC_KEY_set_public_key(ec_key, pub_point) == 0:
+        raise ValueError('EC_KEY_set_public_key() failed: ' + _pop_and_format_error_list())
     if priv_n is not NULL:
         if EC_KEY_set_private_key(ec_key, priv_n) == 0:
             raise ValueError("EC_KEY_set_private_key() error")
@@ -165,7 +183,7 @@ cdef class PublicKey:
         if EC_POINT_oct2point(
                 curve.ec_group, pub_point, sec_point, len(sec_point), GLOBAL_BN_CTX) != 1:
             raise ValueError("unable to parse EC_POINT")  # TODO: parse openssl error
-        self.key = ec2evp_pkey(pub_point, NULL)
+        self.key = ec2evp_pkey(pub_point, NULL, curve.ec_group)
 
     def verify(self, bytes digest, ECDSA_Signature sig):
         cdef int result
@@ -241,21 +259,33 @@ def int2keypair(n, EllipticCurve curve):
 
     buf = "{0:X}".format(n)
     assert BN_hex2bn(&priv_n, buf) == len(buf)
-    print "AAAAA"
 
     pubpoint = EC_POINT_new(curve.ec_group)
-    print "BBBBB"
     if pubpoint is NULL:
         raise MemoryError()  # could not allocate EC_POINT
 
-    print "CCCCC"
-    assert EC_POINT_mul(curve.ec_group, pub_point, priv_n, NULL, NULL, GLOBAL_BN_CTX) == 1
-    print "DDDDD"
-    keypair = ec2evp_pkey(pub_point, priv_n)
-    print "EEEE"
+    assert EC_POINT_mul(curve.ec_group, pub_point, NULL,
+        EC_GROUP_get0_generator(curve.ec_group), priv_n, GLOBAL_BN_CTX) == 1
+    keypair = ec2evp_pkey(pub_point, priv_n, curve.ec_group)
     ret = KeyPair()
     ret.keypair = keypair
     return ret
+
+
+cdef bytes _pop_and_format_error_list():
+    cdef:
+        int err
+        list err_list
+
+    err_list = []
+    err = ERR_get_error()
+    while err:
+        err_list.append((
+            <bytes>ERR_lib_error_string(err),
+            <bytes>ERR_func_error_string(err),
+            <bytes>ERR_reason_error_string(err)))
+        err = ERR_get_error()
+    return b"-".join([b":".join(e) for e in err_list])
 
 
 def ecdh(PublicKey pubkey, KeyPair keypair):
@@ -263,17 +293,19 @@ def ecdh(PublicKey pubkey, KeyPair keypair):
         EVP_PKEY_CTX *ctx = NULL
         size_t secret_len
 
+    ctx = EVP_PKEY_CTX_new(keypair.keypair, NULL)
+    if ctx is NULL:
+        raise MemoryError()  # could not allocate EVP_PKEY_CTX struct
     try:
-        ctx = EVP_PKEY_CTX_new(keypair.keypair, NULL)
-        assert ctx != NULL
         assert EVP_PKEY_derive_init(ctx) == 1
         assert EVP_PKEY_derive_set_peer(ctx, pubkey.key) == 1
         assert EVP_PKEY_derive(ctx, NULL, &secret_len) == 1
         secret = bytearray(secret_len)
         assert EVP_PKEY_derive(ctx, secret, &secret_len) == 1
+    except:
+        raise Exception(_pop_and_format_error_list())
     finally:
-        if ctx:
-            EVP_PKEY_CTX_free(ctx)
+        EVP_PKEY_CTX_free(ctx)
     return secret
 
 
@@ -432,3 +464,6 @@ cdef init_builtin_curves():
 
 
 init_builtin_curves()
+
+def print_errs():
+    print "errors so far...", _pop_and_format_error_list()
