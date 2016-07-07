@@ -1,6 +1,10 @@
 from libc.stdlib cimport malloc, free
 
 
+cdef extern from "openssl/crypto.h":
+    void OPENSSL_free(void *addr)
+
+
 cdef extern from "openssl/bn.h" nogil:
     ctypedef struct BIGNUM:
         pass
@@ -11,7 +15,13 @@ cdef extern from "openssl/bn.h" nogil:
     BN_CTX *BN_CTX_new()
     void BN_CTX_free(BN_CTX *ctx)
 
+    char *BN_bn2hex(const BIGNUM *a)
     int BN_hex2bn(BIGNUM **a, const char *str)
+
+    int BN_bn2bin(const BIGNUM *a, unsigned char *to)
+    BIGNUM *BN_bin2bn(const unsigned char *s, int len, BIGNUM *ret)
+
+    int BN_num_bytes(const BIGNUM *a)
 
 
 cdef extern from "openssl/ec.h" nogil:
@@ -66,6 +76,24 @@ cdef extern from "openssl/ec.h" nogil:
 
     EC_GROUP *EC_GROUP_new_by_curve_name(int nid)
 
+
+cdef extern from "openssl/ecdsa.h" nogil:
+    ctypedef struct ECDSA_SIG:
+        BIGNUM *r
+        BIGNUM *s
+
+    ECDSA_SIG *ECDSA_do_sign(const unsigned char *dgst, int dgst_len,
+                          EC_KEY *eckey)
+
+    int ECDSA_do_verify(const unsigned char *dgst, int dgst_len,
+                     const ECDSA_SIG *sig, EC_KEY* eckey)
+
+    ECDSA_SIG *ECDSA_SIG_new()
+    void ECDSA_SIG_free(ECDSA_SIG *sig)
+
+    void ECDSA_SIG_get0(const ECDSA_SIG *sig, const BIGNUM **pr, const BIGNUM **ps)
+
+    int ECDSA_SIG_set0(ECDSA_SIG *sig, BIGNUM *r, BIGNUM *s)
 
 
 from  evp_h cimport *
@@ -139,6 +167,21 @@ cdef class PublicKey:
             raise ValueError("unable to parse EC_POINT")  # TODO: parse openssl error
         self.key = ec2evp_pkey(pub_point, NULL)
 
+    def verify(self, bytes digest, ECDSA_Signature sig):
+        cdef int result
+        cdef EC_KEY *ec_key
+
+        ec_key = EVP_PKEY_get1_EC_KEY(self.key)
+        result = ECDSA_do_verify(digest, len(digest), sig.sig, ec_key)
+        EC_KEY_free(ec_key)
+        if result == 1:
+            return True
+        elif result == 0:
+            return False
+        elif result == -1:  # TODO: ERR_get_error() for better info
+            raise ValueError('could not check signature')
+        raise ValueError('unexpected result from ECDSA_do_verify: {0}'.format(result))
+
     def __dealloc__(self):
         if self.key is not NULL:
             EVP_PKEY_free(self.key)
@@ -168,6 +211,20 @@ cdef class KeyPair:
         EC_KEY_free(ec_key)
         return buf
 
+    def sign(self, digest):
+        cdef:
+            EC_KEY *ec_key
+            ECDSA_SIG *sig
+
+        ec_key = EVP_PKEY_get1_EC_KEY(self.keypair)
+        sig = ECDSA_do_sign(digest, len(digest), ec_key)
+        if sig is NULL:
+            raise ValueError('could not complete signature')
+        EC_KEY_free(ec_key)
+        pysig = ECDSA_Signature()
+        pysig.sig = sig
+        return pysig
+
     def __dealloc__(self):
         if self.keypair is not NULL:
             EVP_PKEY_free(self.keypair)
@@ -184,14 +241,18 @@ def int2keypair(n, EllipticCurve curve):
 
     buf = "{0:X}".format(n)
     assert BN_hex2bn(&priv_n, buf) == len(buf)
+    print "AAAAA"
 
     pubpoint = EC_POINT_new(curve.ec_group)
+    print "BBBBB"
     if pubpoint is NULL:
         raise MemoryError()  # could not allocate EC_POINT
 
+    print "CCCCC"
     assert EC_POINT_mul(curve.ec_group, pub_point, priv_n, NULL, NULL, GLOBAL_BN_CTX) == 1
+    print "DDDDD"
     keypair = ec2evp_pkey(pub_point, priv_n)
-    
+    print "EEEE"
     ret = KeyPair()
     ret.keypair = keypair
     return ret
@@ -248,6 +309,86 @@ def gen_keypair(EllipticCurve curve):
     ret = KeyPair()
     ret.keypair = pkey
     return ret
+
+
+cdef class ECDSA_Signature:
+    cdef ECDSA_SIG *sig
+
+    def get_r_s_hex(self):
+        '''
+        Get the R and S values as a pair of hex formatted strings.
+        (May be converted to ints with int(r, 16), int(s, 16))
+        '''
+        cdef:
+            char *hex_r
+            char *hex_s
+
+        tmp = NULL
+        assert self.sig is not NULL
+        #ECDSA_SIG_get0(self.sig, &bn_r, &bn_s)
+        # switch to ECDSA_SIG_get0 when support for old version not needed
+        hex_r, hex_s = BN_bn2hex(self.sig.r), BN_bn2hex(self.sig.s)
+        r, s = hex_r, hex_s
+        OPENSSL_free(hex_r)
+        OPENSSL_free(hex_s)
+        return r, s
+
+    def get_r_s_buf(self):
+        '''
+        Get the R and S values as a binary buffer.
+        (First half of string R, second half of string S)
+        '''
+        assert self.sig is not NULL
+        py_r = bytearray(BN_num_bytes(self.sig.r))
+        py_s = bytearray(BN_num_bytes(self.sig.s))
+        BN_bn2bin(self.sig.r, py_r)
+        BN_bn2bin(self.sig.s, py_s)
+        return py_r, py_s
+
+    def __dealloc__(self):
+        if self.sig is not NULL:
+            ECDSA_SIG_free(self.sig)
+
+
+def buf2ECDSA_Signature(bytes r, bytes s):
+    'converts a binary buffers containing r and s into ECDSA_Signature'
+    cdef ECDSA_SIG *sig
+
+    sig = ECDSA_SIG_new()
+    if sig is NULL:
+        raise MemoryError()  # could not allocate ECDSA_SIG struct
+    sig.r = BN_bin2bn(r, len(r), NULL)
+    sig.s = BN_bin2bn(s, len(s), NULL)
+
+    pysig = ECDSA_Signature()
+    pysig.sig = sig
+    return pysig
+
+
+def r_s2ECDSA_Signature(r, s):
+    'converts an r and s integer into an ECDSA signature'
+    cdef:
+        BIGNUM *bn_r
+        BIGNUM *bn_s
+        ECDSA_SIG *sig
+
+    bn_r = NULL
+    bn_s = NULL
+    sig = ECDSA_SIG_new()
+    if sig is NULL:
+        raise MemoryError()  # could not allocate ECDSA_SIG struct
+    buf = "{0:X}".format(r)
+    BN_hex2bn(&sig.r, buf)
+    #BN_hex2bn(&bn_r, buf)
+    buf = "{0:X}".format(s)
+    BN_hex2bn(&sig.s, buf)
+    #BN_hex2bn(&bn_s, buf)
+    #ECDSA_SIG_set0(sig, bn_r, bn_s)
+    # switch to ECDSA_SIG_set0 when old support not needed
+
+    pysig = ECDSA_Signature()
+    pysig.sig = sig
+    return pysig
 
 
 CURVES = {}
