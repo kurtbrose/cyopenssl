@@ -19,13 +19,10 @@ def test():
     # create some keypairs to test crypto
     print "test keypair generate"
     kp, pk = rand_pair()
-    ec.print_errs()
     kp2, pk2 = rand_pair()
     #print "test keypair from integer"
     #ec.int2keypair(random.randint(0, int(1e12)), ec.CURVES['K-163'])
     print "test ECDH"
-    ec.print_errs()
-    print "\\\\\\\\\\\\\\\\\\"
     ec.ecdh(pk, kp2)
     print "test sign"
     sig = kp.sign('hello')
@@ -50,5 +47,8 @@ def print_timings():
     print "verify", timeit.timeit(lambda: pk.verify('hello', sig), number=1000), "ms"
 
 if __name__ == "__main__":
+    import os
+    print os.getpid()
+    raw_input('enter to continue...')
     test()
     print_timings()

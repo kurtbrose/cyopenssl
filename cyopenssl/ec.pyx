@@ -249,6 +249,7 @@ cdef class KeyPair:
 
 
 def int2keypair(n, EllipticCurve curve):
+    raise NotImplemented()
     cdef:
         BIGNUM *priv_n
         EC_POINT *pub_point
@@ -264,8 +265,7 @@ def int2keypair(n, EllipticCurve curve):
     if pubpoint is NULL:
         raise MemoryError()  # could not allocate EC_POINT
 
-    assert EC_POINT_mul(curve.ec_group, pub_point, NULL,
-        EC_GROUP_get0_generator(curve.ec_group), priv_n, GLOBAL_BN_CTX) == 1
+    assert EC_POINT_mul(curve.ec_group, pub_point, priv_n, NULL, NULL, NULL) == 1
     keypair = ec2evp_pkey(pub_point, priv_n, curve.ec_group)
     ret = KeyPair()
     ret.keypair = keypair
