@@ -173,9 +173,7 @@ cdef class PublicKey:
 
     def __cinit__(self, bytes sec_point, EllipticCurve curve):
         'creates an openssl EC public key from sec serialized point'
-        cdef:
-            EC_GROUP *ec_group
-            EC_POINT *pub_point
+        cdef EC_POINT *pub_point
 
         pub_point = EC_POINT_new(curve.ec_group)
         if pub_point is NULL:
@@ -267,6 +265,41 @@ def int2keypair(n, EllipticCurve curve):
 
     assert EC_POINT_mul(curve.ec_group, pub_point, priv_n, NULL, NULL, NULL) == 1
     keypair = ec2evp_pkey(pub_point, priv_n, curve.ec_group)
+    ret = KeyPair()
+    ret.keypair = keypair
+    return ret
+
+
+def sec_point_and_int2keypair(bytes sec_point, n, EllipticCurve curve):
+    cdef:
+        BIGNUM *priv_n
+        EC_KEY *ec_key
+        EVP_PKEY *keypair
+
+    priv_n = NULL
+    pub_point = NULL
+
+    buf = "{0:X}".format(n)
+    assert BN_hex2bn(&priv_n, buf) == len(buf)
+
+    pubpoint = EC_POINT_new(curve.ec_group)
+    if pubpoint is NULL:
+        raise MemoryError()  # could not allocate EC_POINT
+
+    # these 5 lines are an elaborate work-around; not sure why
+    # EC_POINT_oct2point call below segfaults
+    pubkey = PublicKey(sec_point, curve)
+    keypair = pubkey.key
+    pubkey.key = NULL
+    ec_key = EVP_PKEY_get1_EC_KEY(keypair)
+    EC_KEY_set_private_key(ec_key, priv_n)
+    EC_KEY_free(ec_key)
+
+    #if EC_POINT_oct2point(
+    #        curve.ec_group, pub_point, sec_point, len(sec_point), GLOBAL_BN_CTX) != 1:
+    #    raise ValueError("unable to parse EC_POINT")  # TODO: parse openssl error
+    #keypair = ec2evp_pkey(pub_point, priv_n, curve.ec_group)
+
     ret = KeyPair()
     ret.keypair = keypair
     return ret
