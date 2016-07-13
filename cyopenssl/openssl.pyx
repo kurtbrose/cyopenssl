@@ -966,7 +966,7 @@ def aes_gcm_encrypt(bytes plaintext, bytes key, bytes iv, bytes authdata=None, i
         EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, len(iv), NULL)
         EVP_EncryptInit_ex(ctx, NULL, NULL, key, iv)
         if authdata is not None:
-            EVP_EncryptUpdate(ctx, None, &outlen, authdata, len(authdata))
+            EVP_EncryptUpdate(ctx, NULL, &outlen, authdata, len(authdata))
         EVP_EncryptUpdate(ctx, outbuf, &outlen, plaintext, len(plaintext))
         EVP_EncryptFinal_ex(ctx, outbuf + outlen, &tmplen)
         EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, tagsize, tagbuf)
