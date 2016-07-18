@@ -9,7 +9,7 @@ from cyopenssl import *
 RESOURCES = os.path.dirname(os.path.abspath(__file__)) + '/resources'
 
 def make_ctx(trust=True, pkey=True, s='1k'):
-    ctx = Context('TLSv1')
+    ctx = Context('TLSv1.1')
     if pkey:
         ctx.set_password('test')
         ctx.use_certificate_chain_file('{0}/cert{1}.pem'.format(RESOURCES, s))
