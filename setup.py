@@ -47,7 +47,8 @@ def make_extension(name, sources):
 
 extensions = [
     make_extension('openssl', ['cyopenssl/openssl.pyx']),
-    make_extension('ec', ['cyopenssl/ec.pyx'])]
+    make_extension('ec', ['cyopenssl/ec.pyx']),
+    make_extension('rsa', ['cyopenssl/rsa.pyx'])]
 
 
 setup(

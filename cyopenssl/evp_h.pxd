@@ -3,6 +3,11 @@ cdef extern from "openssl/ec.h" nogil:
         pass
 
 
+cdef extern from "openssl/rsa.h" nogil:
+    ctypedef struct RSA:
+        pass
+
+
 cdef extern from "openssl/evp.h" nogil:
     void OpenSSL_add_all_algorithms()
 
@@ -57,6 +62,8 @@ cdef extern from "openssl/evp.h" nogil:
 
     int EVP_PKEY_assign_EC_KEY(EVP_PKEY *pkey,EC_KEY *key)
     EC_KEY *EVP_PKEY_get1_EC_KEY(EVP_PKEY *pkey)
+
+    RSA *EVP_PKEY_get1_RSA(EVP_PKEY *pkey)
 
     EVP_PKEY *EVP_PKEY_new()
 
