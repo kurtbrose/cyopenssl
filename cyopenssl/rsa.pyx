@@ -47,11 +47,14 @@ cdef class KeyPair:
     '''
     cdef EVP_PKEY *private_key
     cdef EVP_PKEY *public_key
+    cdef int size
 
     def __cinit__(self, bytes privkey, bytes pubkey, bytes passphrase):
         cdef:
             BIO *bio
             X509 *x509
+            int size1, size2
+            RSA *rsa
 
         self.private_key = NULL
         self.public_key = NULL
@@ -67,6 +70,19 @@ cdef class KeyPair:
             raise ValueError('PEM_read_bio_X509() failed: ' + err.pop_and_format())
         self.public_key = X509_get_pubkey(x509)
         X509_free(x509)
+        rsa = EVP_PKEY_get1_RSA(self.private_key)
+        size1 = RSA_size(rsa)
+        RSA_free(rsa)
+        rsa = EVP_PKEY_get1_RSA(self.public_key)
+        size2 = RSA_size(rsa)
+        RSA_free(rsa)
+        if size1 <= 0 or size2 <= 0:
+            raise ValueError(
+                "RSA_size on EVP_PKEY structs returned {0}, {1}".format(size1, size2))
+        if size1 != size2:
+            raise ValueError(
+                "public key size {0}, private key size {1}".format(size2 * 8, size1 * 8))
+        self.size = size1
 
 
     def __dealloc__(self):
@@ -76,22 +92,23 @@ cdef class KeyPair:
             EVP_PKEY_free(self.public_key)
 
     def public_encrypt(self, bytes plaintext, Padding padding):
-        return _rsa_helper(self.public_key, plaintext, padding, 1)
+        return _rsa_helper(self.size, self.public_key, plaintext, padding, 1)
 
     def private_decrypt(self, bytes ciphertext, Padding padding):
-        return _rsa_helper(self.private_key, ciphertext, padding, 0)
+        return _rsa_helper(self.size, self.private_key, ciphertext, padding, 0)
+
+    def get_rsa_size(self):
+        'return the curve size (size of ciphertext, maximum size of plaintext)'
+        return self.size
 
 
-cdef bytearray _rsa_helper(EVP_PKEY *pkey, bytes input, Padding padding, int is_encrypt):
+cdef bytearray _rsa_helper(int size, EVP_PKEY *pkey, bytes input, Padding padding, int is_encrypt):
     cdef:
         RSA *rsa
-        int size, rc
+        int rc
 
     rsa = EVP_PKEY_get1_RSA(pkey)
     try:
-        size = RSA_size(rsa)
-        if size <= 0:
-            raise ValueError('RSA_size on keypair EVP_PKEY struct returned {0}'.format(size))
         outbuf = bytearray(size)
         if is_encrypt:
             rc = RSA_public_encrypt(len(input), input, outbuf, rsa, padding.padding)
@@ -101,7 +118,7 @@ cdef bytearray _rsa_helper(EVP_PKEY *pkey, bytes input, Padding padding, int is_
             raise ValueError(
                 ('RSA_public_encrypt()' if is_encrypt else 'RSA_private_decrypt()') +
                 ' failed: ' + err.pop_and_format())
-        return outbuf
+        return outbuf[:rc]
     finally:
         RSA_free(rsa)  # undo inc-ref caused by get1_RSA above
 

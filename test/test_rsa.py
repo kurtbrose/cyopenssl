@@ -11,6 +11,8 @@ def test_rsa_roundtrip():
     keypair = rsa.KeyPair(private_bytes, public_bytes, 'test')
     ct = keypair.public_encrypt('hello world!', rsa.PKCS1_PADDING)
     pt = keypair.private_decrypt(str(ct), rsa.PKCS1_PADDING)
+    assert pt == 'hello world!'
+    assert keypair.get_rsa_size() == 1024 / 8
 
 
 if __name__ == "__main__":
